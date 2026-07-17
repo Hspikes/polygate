@@ -161,6 +161,53 @@ document.addEventListener('DOMContentLoaded', async function() {
       template = template.slice(0, i) + resourceScript + template.slice(i);
     }
 
+    // Add the enterprise use-case story to Part 1 while keeping the bundled
+    // source self-contained and aligned with the deck's existing visual system.
+    const enterpriseStoryCss = `
+.story-num {
+  font-size: var(--type-kicker); line-height: var(--baseline);
+  color: var(--color-accent); letter-spacing: 0.08em; text-transform: uppercase;
+  font-feature-settings: "tnum" 1;
+}
+.story-cols h3 { margin-top: calc(var(--baseline) - 1cap); }
+.story-cols p { max-width: 37ch; }
+.story-caption {
+  margin-top: calc(2 * var(--baseline) - 1cap);
+  font-size: var(--type-kicker); line-height: var(--baseline);
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+  letter-spacing: 0.03em;
+}
+.story-caption b { color: var(--color-accent-700); font-weight: 400; }
+`;
+    const enterpriseStorySlide = `
+  <section class="slide content" data-label="Inside one company">
+    <h2 class="slide-title">One company. Many teams. Many models.</h2>
+    <div class="cols cols-3 story-cols rise">
+      <div>
+        <div class="story-num">01 · The pressure</div>
+        <h3>Many teams,<br>fragmented access</h3>
+        <p>Engineering, marketing and finance use different AI providers. Credentials sprawl, spending lacks a clear owner, and sensitive traffic is hard to govern.</p>
+      </div>
+      <div>
+        <div class="story-num">02 · The control point</div>
+        <h3>One company API</h3>
+        <p>Employees and internal apps call PolyGate with company-issued keys. Hard policy filters providers; cost, health and latency choose the route.</p>
+      </div>
+      <div>
+        <div class="story-num">03 · The outcome</div>
+        <h3>Control without friction</h3>
+        <p>Real provider keys stay hidden. Spend is attributed by team, privacy rules are enforced, failures trigger failover, and every decision leaves an audit trail.</p>
+      </div>
+    </div>
+    <p class="story-caption"><b>Company policy is the hard boundary;</b> employee preference is a soft input.</p>
+    <div class="page-foot" aria-hidden="true"></div>
+  </section>`;
+    template = template.replace('</style>', enterpriseStoryCss + '</style>');
+    template = template.replace(
+      '  <section class="slide quote" data-label="In one line">',
+      enterpriseStorySlide + '\n\n  <section class="slide quote" data-label="In one line">'
+    );
+
     // Parse the template and swap the root element. Scripts inserted via
     // DOMParser/replaceWith are inert per spec — re-create each with
     // createElement so they execute, awaiting onload for src scripts to
