@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PolyGate Gateway Request (契约 #1)",
+  "description": "OpenAI 兼容请求 + polygate 扩展约束。所有客户端(D 的 UI / 压测器)都按此结构发。",
+  "type": "object",
+  "required": ["model", "messages"],
+  "properties": {
+    "model": {
+      "type": "string",
+      "description": "填 'auto' 让网关自动路由；也可指定某个 provider name 强制路由",
+      "examples": ["auto", "real-a", "mock-a"]
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["role", "content"],
+        "properties": {
+          "role": { "type": "string", "enum": ["system", "user", "assistant"] },
+          "content": { "type": "string" }
+        }
+      }
+    },
+    "polygate": {
+      "type": "object",
+      "description": "PolyGate 专属约束，缺省时用下面 default 值",
+      "properties": {
+        "latency_target_ms": { "type": "integer", "default": 3000 },
+        "max_cost_usd":      { "type": "number",  "default": 0.01 },
+        "privacy":           { "type": "string",  "enum": ["standard", "high"], "default": "standard" },
+        "quality":           { "type": "string",  "enum": ["balanced", "high", "cheap"], "default": "balanced" }
+      }
+    }
+  }
+}

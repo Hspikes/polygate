@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PolyGate Decision Card (契约 #2 —— A 产出, D 消费)",
+  "description": "网关每次响应都在标准 OpenAI 响应之外，附带这张卡片，放在响应体的 'polygate' 字段里。这是 A→D 唯一的强契约，改它必须两人同时在场。",
+  "type": "object",
+  "required": ["chosen_provider", "reason", "cache_hit", "cost_estimate_usd", "latency_ms", "tokens", "request_id"],
+  "properties": {
+    "chosen_provider":   { "type": "string", "description": "被选中的 provider name；缓存命中时为 'cache'" },
+    "reason":            { "type": "string", "description": "人类可读的选择理由，直接显示在卡片上" },
+    "cache_hit":         { "type": "boolean" },
+    "cost_estimate_usd": { "type": "number" },
+    "latency_ms":        { "type": "integer" },
+    "tokens": {
+      "type": "object",
+      "required": ["input", "output"],
+      "properties": {
+        "input":  { "type": "integer" },
+        "output": { "type": "integer" }
+      }
+    },
+    "retries":      { "type": "integer", "default": 0, "description": "P1 用；P0 恒为 0" },
+    "failover_from":{ "type": ["string", "null"], "default": null, "description": "P1 用；发生故障切换时记录原 provider" },
+    "request_id":   { "type": "string", "description": "贯穿日志/卡片/请求旅程的主键，入口处生成" }
+  }
+}
