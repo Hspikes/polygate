@@ -1,10 +1,17 @@
-# Redis with persistence (StatefulSet + PVC). Owned by Member C.
+# Redis WITHOUT persistent storage (emptyDir). Fallback if EBS CSI Driver / Pod Identity
+# role setup is blocked by Learner Lab IAM restrictions.
+#
+# Tradeoff: cache data is lost if the Redis pod restarts (node replaced, pod evicted, etc).
+# Acceptable for this project — Redis here is a CACHE, not a source of truth. If it happens
+# right before a demo, just re-run one request first to "warm" the cache again.
+#
+# Swap back to deploy/redis.yaml (PVC-based) any time the EBS CSI Driver gets sorted out —
+# nothing else in the stack needs to change, same Service name/port.
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
   name: redis
 spec:
-  serviceName: redis
   replicas: 1
   selector: { matchLabels: { app: redis } }
   template:
@@ -19,11 +26,9 @@ spec:
             limits:   { cpu: "200m", memory: "256Mi" }
           volumeMounts:
             - { name: data, mountPath: /data }
-  volumeClaimTemplates:
-    - metadata: { name: data }
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources: { requests: { storage: 1Gi } }
+      volumes:
+        - name: data
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
