@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PolyGate · AI Workbench (P0)</title>
+<style>
+  :root { --ink:#1f2937; --muted:#6b7280; --accent:#1d4e89; --line:#e5e7eb; --bg:#f7f8fa; --card:#fff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--ink); background:var(--bg); }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+  textarea { width:100%; min-height:90px; padding:12px; border:1px solid var(--line); border-radius:10px; font:inherit; resize:vertical; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; margin:12px 0; align-items:center; }
+  .row label { font-size:13px; color:var(--muted); display:flex; flex-direction:column; gap:4px; }
+  .row input, .row select { padding:8px; border:1px solid var(--line); border-radius:8px; font:inherit; }
+  button { background:var(--accent); color:#fff; border:0; padding:10px 18px; border-radius:8px; font-weight:600; cursor:pointer; }
+  button.secondary { background:#eef2f7; color:var(--accent); }
+  .answer { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; margin-top:20px; white-space:pre-wrap; }
+  .card { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:12px; padding:16px 18px; margin-top:14px; }
+  .card h3 { margin:0 0 10px; font-size:14px; color:var(--accent); text-transform:uppercase; letter-spacing:.04em; }
+  .kv { display:grid; grid-template-columns: 140px 1fr; gap:6px 12px; font-size:14px; }
+  .kv dt { color:var(--muted); }
+  .kv dd { margin:0; font-variant-numeric: tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  .pill.hit { background:#e6f4ea; color:#1e7e34; }
+  .pill.miss { background:#eef2f7; color:var(--muted); }
+  .err { color:#b3261e; }
+  code { background:#eef2f7; padding:1px 6px; border-radius:5px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>PolyGate · AI Workbench</h1>
+    <p class="sub">P0 skeleton — Member D owns this page. Talks to the gateway at <code id="ep-label"></code>.</p>
+
+    <textarea id="prompt" placeholder="Ask something…">Summarize the plot of Romeo and Juliet in two sentences.</textarea>
+
+    <div class="row">
+      <label>Quality
+        <select id="quality"><option>balanced</option><option>high</option><option>cheap</option></select>
+      </label>
+      <label>Privacy
+        <select id="privacy"><option>standard</option><option>high</option></select>
+      </label>
+      <label>Max cost (USD)
+        <input id="maxcost" type="number" step="0.0001" value="0.002" />
+      </label>
+      <label>Latency target (ms)
+        <input id="latency" type="number" value="3000" />
+      </label>
+    </div>
+
+    <div class="row">
+      <button id="send">Send</button>
+      <button id="demo" class="secondary">Load fixture (no backend)</button>
+    </div>
+
+    <div id="out"></div>
+  </div>
+
+<script>
+  // Point at your local gateway. Members: change if your port differs.
+  const GATEWAY = localStorage.getItem("pg_gateway") || "http://localhost:8000";
+  document.getElementById("ep-label").textContent = GATEWAY;
+
+  function renderCard(answer, pg) {
+    const hit = pg.cache_hit;
+    return `
+      <div class="answer">${escapeHtml(answer)}</div>
+      <div class="card">
+        <h3>Decision card</h3>
+        <dl class="kv">
+          <dt>Provider</dt><dd><strong>${pg.chosen_provider}</strong></dd>
+          <dt>Reason</dt><dd>${escapeHtml(pg.reason)}</dd>
+          <dt>Cache</dt><dd><span class="pill ${hit?'hit':'miss'}">${hit?'HIT · $0':'MISS'}</span></dd>
+          <dt>Cost (est.)</dt><dd>$${Number(pg.cost_estimate_usd).toFixed(6)}</dd>
+          <dt>Latency</dt><dd>${pg.latency_ms} ms</dd>
+          <dt>Tokens</dt><dd>in ${pg.tokens.input} · out ${pg.tokens.output}</dd>
+          <dt>request_id</dt><dd><code>${pg.request_id}</code></dd>
+        </dl>
+      </div>`;
+  }
+
+  function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+  async function send() {
+    const out = document.getElementById("out");
+    out.innerHTML = "<p class='sub'>Sending…</p>";
+    const payload = {
+      model: "auto",
+      messages: [{ role: "user", content: document.getElementById("prompt").value }],
+      polygate: {
+        quality: document.getElementById("quality").value,
+        privacy: document.getElementById("privacy").value,
+        max_cost_usd: parseFloat(document.getElementById("maxcost").value),
+        latency_target_ms: parseInt(document.getElementById("latency").value, 10),
+      }
+    };
+    try {
+      const r = await fetch(`${GATEWAY}/v1/chat/completions`, {
+        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload)
+      });
+      if (!r.ok) { out.innerHTML = `<p class='err'>Gateway error ${r.status}: ${await r.text()}</p>`; return; }
+      const data = await r.json();
+      out.innerHTML = renderCard(data.answer ?? data.choices?.[0]?.message?.content ?? "", data.polygate);
+    } catch (e) {
+      out.innerHTML = `<p class='err'>Cannot reach gateway at ${GATEWAY}. Is it running? (${e})</p>`;
+    }
+  }
+
+  async function loadFixture() {
+    const out = document.getElementById("out");
+    const data = await fetch("./fixtures/decision-card.example.json").then(r=>r.json());
+    out.innerHTML = renderCard(data.answer, data.polygate);
+  }
+
+  document.getElementById("send").onclick = send;
+  document.getElementById("demo").onclick = loadFixture;
+</script>
+</body>
+</html>

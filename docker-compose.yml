@@ -1,0 +1,29 @@
+# Local end-to-end stack. This is the KEY to parallel work:
+# A/B/D develop here every day; only Member C touches EKS (until Day-4 integration).
+# Start everything:   docker compose up --build
+# Then open web/index.html in a browser (or serve web/ on :8080).
+services:
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  mock-a:
+    build: ./providers/mock
+    environment: { MOCK_NAME: mock-a }
+    ports: ["8081:8080"]
+
+  mock-b:
+    build: ./providers/mock
+    environment: { MOCK_NAME: mock-b }
+    ports: ["8082:8080"]
+
+  gateway:
+    build: ./gateway
+    depends_on: [redis, mock-a, mock-b]
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      PROVIDERS_FILE: /app/providers.yaml
+      # REAL_A_API_KEY: set this in a local .env (never commit it) to enable real-a
+    ports: ["8000:8000"]
+    volumes:
+      - ./contracts/providers.yaml:/app/providers.yaml:ro

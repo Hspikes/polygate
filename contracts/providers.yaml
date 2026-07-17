@@ -1,0 +1,49 @@
+# ============================================================
+# PolyGate Provider Registry  (契约 #4 —— A 的路由 + D 的卡片都读它)
+# ------------------------------------------------------------
+# 价格、隐私级别、endpoint 全部集中在这里，禁止散落在代码各处。
+# 新增/删除一个 Provider 只改这个文件（P2 的 Provider CRD 就是把它 CRD 化）。
+#
+# 字段说明：
+#   name                 唯一标识，出现在决策卡片的 chosen_provider 里
+#   kind                 real | mock
+#   endpoint             OpenAI 兼容的 chat/completions 地址
+#   price_per_1k_input   每 1000 个输入 token 的价格 (USD)
+#   price_per_1k_output  每 1000 个输出 token 的价格 (USD)
+#   privacy              external | internal
+#                        - external: 数据会离开我们的环境（真实第三方 API）
+#                        - internal: 数据不出环境（本地 Mock / 自托管）
+#                        路由规则：请求 privacy=high 时，禁止选 external 的 Provider
+#   typical_latency_ms   经验延迟，仅用于路由预估（真实健康度由 B 的探测覆盖）
+# ============================================================
+
+providers:
+  - name: real-a
+    kind: real
+    endpoint: ${REAL_A_ENDPOINT:-https://api.deepseek.com/v1/chat/completions}
+    api_key_env: REAL_A_API_KEY          # key 从环境变量读，绝不写进仓库
+    model: deepseek-chat
+    price_per_1k_input: 0.0005
+    price_per_1k_output: 0.0015
+    privacy: external
+    typical_latency_ms: 1500
+
+  - name: mock-a
+    kind: mock
+    endpoint: http://mock-a:8080/v1/chat/completions
+    admin_endpoint: http://mock-a:8080/admin/config
+    model: mock-fast
+    price_per_1k_input: 0.0001
+    price_per_1k_output: 0.0002
+    privacy: internal
+    typical_latency_ms: 300
+
+  - name: mock-b
+    kind: mock
+    endpoint: http://mock-b:8080/v1/chat/completions
+    admin_endpoint: http://mock-b:8080/admin/config
+    model: mock-cheap
+    price_per_1k_input: 0.00005
+    price_per_1k_output: 0.00008
+    privacy: internal
+    typical_latency_ms: 900

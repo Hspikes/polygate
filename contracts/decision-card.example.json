@@ -1,0 +1,14 @@
+{
+  "answer": "Hello! This is a sample echoed answer from PolyGate.",
+  "polygate": {
+    "chosen_provider": "mock-a",
+    "reason": "满足 3000ms 延迟目标；在预算 $0.0020 内成本最低（real-a 更贵，mock-b 延迟 900ms 也可但更省被 quality=balanced 权衡后未选）",
+    "cache_hit": false,
+    "cost_estimate_usd": 0.00042,
+    "latency_ms": 312,
+    "tokens": { "input": 340, "output": 128 },
+    "retries": 0,
+    "failover_from": null,
+    "request_id": "req_8f3a1c9e"
+  }
+}

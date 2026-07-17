@@ -1,0 +1,44 @@
+# Two mock providers as independent Deployments + Services. Owned by C (manifests) / B (image).
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: mock-a }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: mock-a } }
+  template:
+    metadata: { labels: { app: mock-a } }
+    spec:
+      containers:
+        - name: mock
+          image: REGISTRY/polygate-mock:latest   # C: replace REGISTRY after pushing
+          env: [{ name: MOCK_NAME, value: mock-a }]
+          ports: [{ containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /health, port: 8080 }, initialDelaySeconds: 3, periodSeconds: 5 }
+          resources: { requests: { cpu: "50m", memory: "64Mi" }, limits: { cpu: "200m", memory: "128Mi" } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mock-a }
+spec: { selector: { app: mock-a }, ports: [{ port: 8080, targetPort: 8080 }] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: mock-b }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: mock-b } }
+  template:
+    metadata: { labels: { app: mock-b } }
+    spec:
+      containers:
+        - name: mock
+          image: REGISTRY/polygate-mock:latest
+          env: [{ name: MOCK_NAME, value: mock-b }]
+          ports: [{ containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /health, port: 8080 }, initialDelaySeconds: 3, periodSeconds: 5 }
+          resources: { requests: { cpu: "50m", memory: "64Mi" }, limits: { cpu: "200m", memory: "128Mi" } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mock-b }
+spec: { selector: { app: mock-b }, ports: [{ port: 8080, targetPort: 8080 }] }
