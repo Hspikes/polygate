@@ -9,6 +9,9 @@ from app.cost import estimate_cost, rough_input_tokens
 # Assumed output size for pre-call budget filtering (we don't know real output yet).
 ASSUMED_OUTPUT_TOKENS = 256
 
+# quality=balanced 时，愿意为了拿到 real Provider 而多付的价差上限（相对最低成本的比例）
+BALANCED_PRICE_TOLERANCE = 0.20
+
 
 def _healthy(provider: dict, health: dict) -> bool:
     # P0: health map is optional; unknown == healthy. B's probe (P1) fills this in.
@@ -52,17 +55,39 @@ def select_provider(providers: list[dict], messages: list[dict], c, health: dict
         reasons.append(f"无 Provider 满足 {c.latency_target_ms}ms 延迟目标，放宽此约束")
 
     # 5. quality policy → final pick
+    reals = [p for p in latency_pool if p.get("kind") == "real"]
+
     if c.quality == "high":
-        # prefer a real provider if present, else cheapest
-        reals = [p for p in latency_pool if p.get("kind") == "real"]
-        chosen = min(reals or latency_pool, key=est)
-        policy = "quality=high → 优先真实 Provider"
+        # 优先真实 Provider；如果因为上面的过滤（尤其是隐私约束）导致没有 real 可选，
+        # 诚实说明"退化"了，而不是继续声称选的是真实 Provider
+        if reals:
+            chosen = min(reals, key=est)
+            policy = "quality=high → 优先真实 Provider"
+        else:
+            chosen = min(latency_pool, key=est)
+            policy = "quality=high → 无可用真实 Provider（可能已被隐私约束排除），退化为最低成本"
+
     elif c.quality == "cheap":
         chosen = min(latency_pool, key=est)
         policy = "quality=cheap → 直接取最低成本"
+
     else:  # balanced
-        chosen = min(latency_pool, key=est)
-        policy = "quality=balanced → 在满足延迟/预算的候选中取最低成本"
+        cheapest = min(latency_pool, key=est)
+        if cheapest.get("kind") == "real" or not reals:
+            # 最便宜的本身就是 real，或者根本没有 real 可选：没什么可权衡的
+            chosen = cheapest
+            policy = "quality=balanced → 最低成本本身即为真实 Provider（或无真实 Provider 可选）"
+        else:
+            cheapest_real = min(reals, key=est)
+            if est(cheapest_real) <= est(cheapest) * (1 + BALANCED_PRICE_TOLERANCE):
+                chosen = cheapest_real
+                policy = (
+                    f"quality=balanced → 最便宜的是 mock，但真实 Provider 价差在 "
+                    f"{int(BALANCED_PRICE_TOLERANCE * 100)}% 以内，为提升质量选择真实 Provider"
+                )
+            else:
+                chosen = cheapest
+                policy = "quality=balanced → 真实 Provider 价差过大，选择最低成本"
 
     reason = (
         f"{policy}；选中 {chosen['name']}（预估 ${est(chosen):.6f}，"
