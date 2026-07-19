@@ -81,6 +81,33 @@ class CacheBypassRegressionTests(unittest.TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertTrue(second.json()["polygate"]["cache_hit"])
 
+    def test_changing_quality_bypasses_stale_cache(self):
+        """同样的 messages，先用 quality=cheap 跑一次，再改成 quality=high，
+        预期两次都是真实路由（cache_hit=False），而不是第二次被第一次的缓存短路。
+        这是今天在容器化环境里实测发现的 bug：cache_key 之前没有纳入 quality 参数。"""
+        cheap_resp = client.post("/v1/chat/completions", json={
+            "model": "auto",
+            "messages": [{"role": "user", "content": "quality 切换测试专用内容"}],
+            "polygate": {"privacy": "standard", "quality": "cheap"},
+        })
+        self.assertEqual(cheap_resp.status_code, 200)
+        cheap_card = cheap_resp.json()["polygate"]
+        self.assertFalse(cheap_card["cache_hit"])
+
+        high_resp = client.post("/v1/chat/completions", json={
+            "model": "auto",
+            "messages": [{"role": "user", "content": "quality 切换测试专用内容"}],
+            "polygate": {"privacy": "standard", "quality": "high"},
+        })
+        self.assertEqual(high_resp.status_code, 200)
+        high_card = high_resp.json()["polygate"]
+
+        # 核心断言：quality 变了，就算 messages 一样，也不应该命中上一次的缓存
+        self.assertFalse(
+            high_card["cache_hit"],
+            "quality 变了但被缓存短路了！cache_key 没有正确纳入 quality 参数"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
