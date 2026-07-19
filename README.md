@@ -17,6 +17,8 @@ cd web && python -m http.server 8080   # 另开终端，打开 http://localhost:
 - 指标查询：<http://localhost:9090>
 - 采集目标：<http://localhost:9090/targets>
 - 自动检查：`./scripts/prometheus-smoke-test.sh`
+- 监控后端：<http://localhost:8010/api/monitoring/overview>
+- 后端检查：`./scripts/monitoring-api-smoke-test.sh`
 
 详细说明见 [`monitoring/README.md`](./monitoring/README.md)。
 
