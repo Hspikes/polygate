@@ -178,6 +178,88 @@ class GatewayMetricsTest(unittest.TestCase):
             request_error_before + 1,
         )
 
+    def test_client_errors_are_counted_once_without_cache_lookup(self):
+        client_error_before = metric_value(
+            "polygate_requests_total",
+            {"outcome": "client_error"},
+        )
+        duration_before = metric_value(
+            "polygate_request_duration_seconds_count",
+            {"outcome": "client_error"},
+        )
+        cache_before = (
+            metric_value(
+                "polygate_cache_requests_total",
+                {"result": "hit"},
+            )
+            + metric_value(
+                "polygate_cache_requests_total",
+                {"result": "miss"},
+            )
+        )
+
+        responses = [
+            client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "does-not-exist",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "unknown provider metrics test",
+                        }
+                    ],
+                },
+            ),
+            client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "real-a",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "privacy metrics test",
+                        }
+                    ],
+                    "polygate": {"privacy": "high"},
+                },
+            ),
+            client.post(
+                "/v1/chat/completions",
+                json={"model": "auto"},
+            ),
+        ]
+
+        self.assertEqual(
+            [response.status_code for response in responses],
+            [400, 403, 422],
+        )
+        self.assertEqual(
+            metric_value(
+                "polygate_requests_total",
+                {"outcome": "client_error"},
+            ),
+            client_error_before + 3,
+        )
+        self.assertEqual(
+            metric_value(
+                "polygate_request_duration_seconds_count",
+                {"outcome": "client_error"},
+            ),
+            duration_before + 3,
+        )
+        cache_after = (
+            metric_value(
+                "polygate_cache_requests_total",
+                {"result": "hit"},
+            )
+            + metric_value(
+                "polygate_cache_requests_total",
+                {"result": "miss"},
+            )
+        )
+        self.assertEqual(cache_after, cache_before)
+
 
 if __name__ == "__main__":
     unittest.main()
