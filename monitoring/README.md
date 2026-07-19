@@ -10,8 +10,10 @@ Gateway /metrics -> Prometheus -> Grafana dashboard
                               \-> Monitoring API
 ```
 
-This stage covers Gateway business metrics only. Kubernetes Pod metrics and
-HPA data are separate later stages.
+The local Compose stage covers Gateway business metrics. The same Grafana
+dashboard also contains Kubernetes Pod CPU, memory, restart, and HPA panels;
+they show `N/A` locally and receive data after the prepared Kubernetes
+monitoring stack is deployed.
 
 ## Start
 
@@ -59,7 +61,8 @@ needed: Compose mounts the data-source YAML and dashboard JSON from
 
 The dashboard includes Gateway availability, request throughput, error rate,
 P95 latency, cache hit rate, tokens, estimated cost, and per-provider traffic,
-success rate, latency, and cost.
+success rate, latency, and cost. Its Kubernetes section adds available and
+desired replicas, per-Pod CPU and memory, HPA history, and container restarts.
 
 Anonymous Viewer access is enabled only to make local coursework demos open
 without a login. Do not expose this Compose configuration directly to the
@@ -80,8 +83,10 @@ defined in:
 - `contracts/monitoring-overview.schema.json`
 - `contracts/monitoring-overview.example.json`
 
-The local response sets `resources.available` to `false`. CPU, memory, and HPA
-replicas will be filled in later when Kubernetes resource metrics are connected.
+The local response sets `resources.available` to `false`. Monitoring API is
+kept as an optional local JSON consumer and is intentionally not deployed to
+Kubernetes. The cloud Grafana dashboard reads resource metrics directly from
+Prometheus; deployment details are in `deploy/monitoring/README.md`.
 
 Ratio fields use `null` when the selected window contains no relevant traffic:
 

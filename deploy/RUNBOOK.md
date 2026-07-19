@@ -48,10 +48,10 @@ kubectl get pods -A | grep -v Running
 
 ## 4. 已知状态存档（别重新踩一遍这些坑）
 
-- **存储用的是 `deploy/redis-no-pvc.yaml`（emptyDir），不是 `redis.yaml`（PVC 版）。**
+- **存储用的是 `deploy/redis.yaml`（emptyDir）。**
   原因：这个账号的 EBS CSI Driver 插件因 IAM 权限（Pod Identity 角色关联失败）
   跑不起来，`CrashLoopBackOff` 排查后判定修复成本过高，已改用 emptyDir。
-  → **别再手滑 `kubectl apply -f redis.yaml`**，那个会失败。
+  PVC 参考版本在 `deploy/reference/redis-pvc.yaml`，当前不要应用它。
 - **Node group 扩缩容范围已经改过**：min=2 / desired=2 / max=4
   （控制台默认建出来的不一定带这个范围，已经手动 `update-nodegroup-config` 改过，
   不用重复操作，除非发现被重置回默认值）。
@@ -74,11 +74,26 @@ curl -s http://<节点公网IP>:<NodePort端口>/health
 ## 6. 一键自检（收尾）
 
 ```bash
+kubectl port-forward service/mock-b 18082:8080
+```
+
+保持上面的端口转发运行，在另一个终端执行：
+
+```bash
 GATEWAY=http://<节点公网IP>:<gateway的NodePort> \
-MOCK_B_ADMIN=http://<节点公网IP>:<mock-b的NodePort>/admin \
+MOCK_B_ADMIN=http://localhost:18082/admin \
 ./scripts/smoke-test.sh
 ```
 全绿就说明整套环境刷新完毕，可以继续干活了。
+
+监控部署后再确认：
+
+```bash
+kubectl get deployment prometheus grafana kube-state-metrics
+kubectl port-forward service/grafana 3000:3000
+```
+
+打开 <http://localhost:3000>，确认 Gateway target、CPU、内存和 HPA 面板有数据。
 
 ## 7. 顺手看一眼预算
 

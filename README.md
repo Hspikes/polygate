@@ -21,6 +21,7 @@ cd web && python -m http.server 8080   # 另开终端，打开 http://localhost:
 - 后端检查：`./scripts/monitoring-api-smoke-test.sh`
 - Grafana 仪表盘：<http://localhost:3000/d/polygate-overview/polygate-overview>
 - 前后端联通检查：`./scripts/grafana-smoke-test.sh`
+- 云端监控部署前检查：`./scripts/kubernetes-monitoring-preflight.sh`
 
 详细说明见 [`monitoring/README.md`](./monitoring/README.md)。
 
