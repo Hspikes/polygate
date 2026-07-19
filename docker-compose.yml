@@ -27,3 +27,18 @@ services:
     ports: ["8000:8000"]
     volumes:
       - ./contracts/providers.yaml:/app/providers.yaml:ro
+
+  prometheus:
+    image: prom/prometheus:v3.13.1
+    depends_on: [gateway]
+    ports: ["9090:9090"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2d
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+volumes:
+  prometheus-data:
