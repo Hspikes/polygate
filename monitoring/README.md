@@ -1,15 +1,17 @@
 # Local monitoring
 
-This directory contains the local monitoring backend: Prometheus periodically
-reads the Gateway's `GET /metrics` endpoint, and Monitoring API turns fixed
-Prometheus queries into stable frontend-facing JSON.
+This directory contains the local monitoring stack. Prometheus periodically
+reads the Gateway's `GET /metrics` endpoint. Grafana provides the full
+operations dashboard, while Monitoring API turns fixed Prometheus queries into
+stable JSON for small summaries and programmatic consumers.
 
 ```text
-Gateway /metrics -> Prometheus -> Monitoring API
+Gateway /metrics -> Prometheus -> Grafana dashboard
+                              \-> Monitoring API
 ```
 
-This stage covers Gateway business metrics only. Grafana, the monitoring
-frontend, Kubernetes Pod metrics, and HPA data are separate later stages.
+This stage covers Gateway business metrics only. Kubernetes Pod metrics and
+HPA data are separate later stages.
 
 ## Start
 
@@ -33,16 +35,36 @@ Useful endpoints:
 - Prometheus readiness: <http://localhost:9090/-/ready>
 - Monitoring API health: <http://localhost:8010/health>
 - Monitoring overview: <http://localhost:8010/api/monitoring/overview>
+- Grafana dashboard: <http://localhost:3000/d/polygate-overview/polygate-overview>
 
-Run both automated local checks after the stack starts:
+Run the automated local checks after the stack starts:
 
 ```bash
+./scripts/smoke-test.sh
 ./scripts/prometheus-smoke-test.sh
 ./scripts/monitoring-api-smoke-test.sh
+./scripts/grafana-smoke-test.sh
 ```
 
 They verify that Prometheus is ready, the Gateway target is `UP`, and both
-Prometheus and Monitoring API observe new Gateway requests.
+Prometheus and Monitoring API observe new Gateway requests. The Grafana check
+also verifies that the version-controlled data source and dashboard were
+provisioned and that a query can travel through Grafana to Prometheus.
+
+## Grafana dashboard
+
+Grafana is pinned to the OSS `grafana/grafana:12.4.0` image. No manual setup is
+needed: Compose mounts the data-source YAML and dashboard JSON from
+`monitoring/grafana/`, and the dashboard opens as the local home page.
+
+The dashboard includes Gateway availability, request throughput, error rate,
+P95 latency, cache hit rate, tokens, estimated cost, and per-provider traffic,
+success rate, latency, and cost.
+
+Anonymous Viewer access is enabled only to make local coursework demos open
+without a login. Do not expose this Compose configuration directly to the
+public internet. Dashboard edits should be made in the JSON file and committed
+to Git; the provisioned dashboard is read-only in the UI.
 
 ## Monitoring API
 
@@ -103,3 +125,5 @@ If the Prometheus target is `DOWN`:
    Prometheus container, `localhost` means the Prometheus container itself.
 5. Monitoring API must use `http://prometheus:9090`, not `localhost:9090`, for
    the same container-network reason.
+6. Grafana uses the same `http://prometheus:9090` Compose-network URL. Check its
+   provisioning and query path with `./scripts/grafana-smoke-test.sh`.
