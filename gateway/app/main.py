@@ -87,9 +87,11 @@ def chat_completions(req: GatewayRequest):
             )
 
     # 1. cache lookup —— key 里带上 forced provider 的身份（cache_scope），
-    #    避免"强制指定 mock-b"被"mock-a 的历史缓存"张冠李戴
+    #    以及 quality/max_cost_usd（自动路由时这两个约束会影响实际选中的 provider），
+    #    避免"强制指定 mock-b"被"mock-a 的历史缓存"张冠李戴，
+    #    也避免"改约束但 messages 没变"时被缓存直接短路、观察不到路由结果变化
     cache_scope = forced["name"] if forced else "auto"
-    key = cache_key(messages, c.privacy, cache_scope)
+    key = cache_key(messages, c.privacy, cache_scope, c.quality, c.max_cost_usd)
     cached = CACHE.get(key)
     if cached:
         record_cache("hit")
@@ -142,7 +144,7 @@ def chat_completions(req: GatewayRequest):
         estimated_cost_usd=cost,
     )
 
-    # 5. store in cache for next identical request —— key 用同一个 cache_scope，保证查/存一致
+    # 5. store in cache for next identical request —— key 用同一个 cache_scope/quality/max_cost_usd，保证查/存一致
     CACHE.set(key, {"answer": result.content, "tokens": card.tokens.model_dump()})
     record_request("success", time.perf_counter() - t0)
     log.info(f'{{"request_id":"{request_id}","event":"served","provider":"{chosen["name"]}","cost":{cost},"latency_ms":{latency_ms}}}')
