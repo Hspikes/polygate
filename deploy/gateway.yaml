@@ -50,7 +50,7 @@ spec:
     spec:
       containers:
         - name: gateway
-          image: 896133844534.dkr.ecr.us-east-1.amazonaws.com/polygate-gateway:v1
+          image: 356029564744.dkr.ecr.us-east-1.amazonaws.com/polygate-gateway:v2
           ports: [{ name: http, containerPort: 8000 }]
           env:
             - { name: REDIS_URL, value: "redis://redis:6379/0" }
