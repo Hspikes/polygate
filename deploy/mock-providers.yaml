@@ -14,6 +14,7 @@ spec:
           env: [{ name: MOCK_NAME, value: mock-a }]
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /health, port: 8080 }, initialDelaySeconds: 3, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /health, port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
           resources: { requests: { cpu: "50m", memory: "64Mi" }, limits: { cpu: "200m", memory: "128Mi" } }
 ---
 apiVersion: v1
@@ -36,6 +37,7 @@ spec:
           env: [{ name: MOCK_NAME, value: mock-b }]
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /health, port: 8080 }, initialDelaySeconds: 3, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /health, port: 8080 }, initialDelaySeconds: 10, periodSeconds: 10 }
           resources: { requests: { cpu: "50m", memory: "64Mi" }, limits: { cpu: "200m", memory: "128Mi" } }
 ---
 apiVersion: v1

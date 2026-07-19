@@ -1,0 +1,73 @@
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+  evaluation_interval: 5s
+
+scrape_configs:
+  # Discover every Gateway Pod directly. Scraping the gateway Service would
+  # load-balance successive scrapes across replicas and corrupt counters.
+  - job_name: polygate-gateway
+    metrics_path: /metrics
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - default
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        regex: gateway
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_phase]
+        regex: Running
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_container_name]
+        regex: gateway
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        regex: "8000"
+        action: keep
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        target_label: node
+
+  # kube-state-metrics exposes Deployment, Pod, and HPA object state.
+  - job_name: kube-state-metrics
+    static_configs:
+      - targets:
+          - kube-state-metrics:8080
+
+  # The kubelet already exposes actual container CPU and memory consumption.
+  # Proxying through the Kubernetes API avoids opening kubelet ports publicly.
+  - job_name: kubernetes-cadvisor
+    scheme: https
+    authorization:
+      credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    tls_config:
+      ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    kubernetes_sd_configs:
+      - role: node
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_node_name]
+        target_label: node
+      - target_label: __address__
+        replacement: kubernetes.default.svc:443
+      - source_labels: [__meta_kubernetes_node_name]
+        regex: (.+)
+        target_label: __metrics_path__
+        replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: container_cpu_usage_seconds_total|container_memory_working_set_bytes
+        action: keep
+      - source_labels: [namespace]
+        regex: default
+        action: keep
+      - source_labels: [pod]
+        regex: gateway-.*
+        action: keep
+      - source_labels: [container]
+        regex: gateway
+        action: keep
