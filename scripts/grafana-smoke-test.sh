@@ -112,15 +112,19 @@ expressions = [
 expected = (
     dashboard.get("uid") == "polygate-overview"
     and dashboard.get("title") == "PolyGate Overview"
-    and len(panels) >= 10
+    and len(panels) >= 20
     and any("polygate_requests_total" in expr for expr in expressions)
     and any("polygate_provider_requests_total" in expr for expr in expressions)
     and any(".*_error" in expr for expr in expressions)
     and all("clamp_min" not in expr for expr in expressions)
+    and any("container_cpu_usage_seconds_total" in expr for expr in expressions)
+    and any("container_memory_working_set_bytes" in expr for expr in expressions)
+    and any("kube_deployment_status_replicas_available" in expr for expr in expressions)
+    and any("kube_horizontalpodautoscaler_status_desired_replicas" in expr for expr in expressions)
 )
 raise SystemExit(0 if expected else 1)
 '; then
-  ok "PolyGate dashboard and business-metric panels are provisioned"
+  ok "PolyGate business and Kubernetes dashboard panels are provisioned"
 else
   bad "PolyGate dashboard is missing or incomplete"
 fi
