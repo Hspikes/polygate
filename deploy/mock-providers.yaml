@@ -10,7 +10,7 @@ spec:
     spec:
       containers:
         - name: mock
-          image: 896133844534.dkr.ecr.us-east-1.amazonaws.com/polygate-mock:v1   # C: replace REGISTRY after pushing
+          image: 356029564744.dkr.ecr.us-east-1.amazonaws.com/polygate-mock:v1   # C: replace REGISTRY after pushing
           env: [{ name: MOCK_NAME, value: mock-a }]
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /health, port: 8080 }, initialDelaySeconds: 3, periodSeconds: 5 }
@@ -32,7 +32,7 @@ spec:
     spec:
       containers:
         - name: mock
-          image: 896133844534.dkr.ecr.us-east-1.amazonaws.com/polygate-mock:v1
+          image: 356029564744.dkr.ecr.us-east-1.amazonaws.com/polygate-mock:v1
           env: [{ name: MOCK_NAME, value: mock-b }]
           ports: [{ containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /health, port: 8080 }, initialDelaySeconds: 3, periodSeconds: 5 }
@@ -41,4 +41,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata: { name: mock-b }
-spec: { selector: { app: mock-b }, ports: [{ port: 8080, targetPort: 8080 }] }
+spec:
+  selector: { app: mock-b }
+  ports: [{ port: 8080, targetPort: 8080 }]
+  type: NodePort
