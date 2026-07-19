@@ -16,9 +16,13 @@ class FakePrometheus:
         *,
         reachable: bool = True,
         fail_queries: bool = False,
+        gateway_up: float | None = 1.0,
+        no_traffic: bool = False,
     ):
         self.reachable = reachable
         self.fail_queries = fail_queries
+        self.gateway_up = gateway_up
+        self.no_traffic = no_traffic
 
     def ready(self) -> bool:
         return self.reachable
@@ -26,7 +30,32 @@ class FakePrometheus:
     def query_many(self, expressions):
         if self.fail_queries:
             raise PrometheusError("forced query failure")
+        if self.no_traffic:
+            return {
+                "gateway_up": (
+                    [sample(self.gateway_up)]
+                    if self.gateway_up is not None
+                    else []
+                ),
+                "requests_total": [],
+                "request_rate": [],
+                "error_rate": [],
+                "request_p95": [],
+                "cache_total": [],
+                "cache_hit_rate": [],
+                "input_tokens": [],
+                "output_tokens": [],
+                "estimated_cost": [],
+                "provider_requests": [],
+                "provider_success_rate": [],
+                "provider_p95": [],
+            }
         return {
+            "gateway_up": (
+                [sample(self.gateway_up)]
+                if self.gateway_up is not None
+                else []
+            ),
             "requests_total": [sample(42)],
             "request_rate": [sample(0.5)],
             "error_rate": [sample(0.1)],
@@ -102,6 +131,59 @@ class MonitoringApiTest(unittest.TestCase):
         self.assertIsNone(body["providers"][1]["p95_latency_ms"])
         self.assertFalse(body["resources"]["available"])
         self.assertFalse(body["partial"])
+        self.assertEqual(body["warnings"], [])
+
+    def test_overview_uses_null_for_no_traffic_ratios(self):
+        app.dependency_overrides[get_prometheus] = lambda: FakePrometheus(
+            no_traffic=True
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/api/monitoring/overview",
+                params={"window": "5m"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["gateway"]["requests_total"], 0)
+        self.assertIsNone(body["gateway"]["error_rate"])
+        self.assertIsNone(body["gateway"]["p95_latency_ms"])
+        self.assertIsNone(body["cache"]["hit_rate"])
+        self.assertEqual(body["providers"], [])
+        self.assertFalse(body["partial"])
+        self.assertGreaterEqual(len(body["warnings"]), 2)
+
+    def test_overview_is_partial_when_gateway_target_is_down(self):
+        app.dependency_overrides[get_prometheus] = lambda: FakePrometheus(
+            gateway_up=0.0
+        )
+
+        with TestClient(app) as client:
+            response = client.get("/api/monitoring/overview")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["partial"])
+        self.assertTrue(
+            any("DOWN" in warning for warning in body["warnings"])
+        )
+
+    def test_overview_is_partial_when_gateway_target_is_missing(self):
+        app.dependency_overrides[get_prometheus] = lambda: FakePrometheus(
+            gateway_up=None,
+            no_traffic=True,
+        )
+
+        with TestClient(app) as client:
+            response = client.get("/api/monitoring/overview")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["partial"])
+        self.assertTrue(
+            any("missing" in warning for warning in body["warnings"])
+        )
 
     def test_overview_rejects_unknown_window(self):
         app.dependency_overrides[get_prometheus] = lambda: FakePrometheus()

@@ -10,7 +10,7 @@ import os
 import time
 import uuid
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST
 
@@ -40,6 +40,34 @@ CACHE = Cache()
 HEALTH: dict[str, str] = {}
 
 
+@app.middleware("http")
+async def record_chat_request(request: Request, call_next):
+    """Record every chat request exactly once, including validation errors."""
+    if (
+        request.method != "POST"
+        or request.url.path != "/v1/chat/completions"
+    ):
+        return await call_next(request)
+
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        record_request("server_error", time.perf_counter() - started)
+        raise
+
+    outcome = getattr(request.state, "metric_outcome", None)
+    if outcome is None:
+        if 400 <= response.status_code < 500:
+            outcome = "client_error"
+        elif response.status_code >= 500:
+            outcome = "server_error"
+        else:
+            outcome = "success"
+    record_request(outcome, time.perf_counter() - started)
+    return response
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "providers": [p["name"] for p in PROVIDERS], "cache": CACHE.enabled}
@@ -67,7 +95,7 @@ def providers():
 
 
 @app.post("/v1/chat/completions")
-def chat_completions(req: GatewayRequest):
+def chat_completions(req: GatewayRequest, request: Request):
     request_id = "req_" + uuid.uuid4().hex[:8]
     c = req.polygate
     messages = [m.model_dump() for m in req.messages]
@@ -95,13 +123,13 @@ def chat_completions(req: GatewayRequest):
     cached = CACHE.get(key)
     if cached:
         record_cache("hit")
+        request.state.metric_outcome = "cache_hit"
         latency_ms = int((time.perf_counter() - t0) * 1000)
         card = DecisionCard(
             chosen_provider="cache", reason="精确缓存命中，未调用任何 Provider，成本为 0",
             cache_hit=True, cost_estimate_usd=0.0, latency_ms=latency_ms,
             tokens=Tokens(**cached["tokens"]), request_id=request_id,
         )
-        record_request("cache_hit", time.perf_counter() - t0)
         log.info(f'{{"request_id":"{request_id}","event":"cache_hit"}}')
         return _envelope(cached["answer"], card)
     record_cache("miss")
@@ -113,7 +141,7 @@ def chat_completions(req: GatewayRequest):
         else:
             chosen, reason, _ = select_provider(PROVIDERS, messages, c, HEALTH)
     except RuntimeError as e:
-        record_request("routing_error", time.perf_counter() - t0)
+        request.state.metric_outcome = "routing_error"
         raise HTTPException(status_code=503, detail=str(e))
 
     # 3. call provider via adapter
@@ -122,7 +150,7 @@ def chat_completions(req: GatewayRequest):
         result = call_provider(chosen, messages)
     except Exception as e:
         record_provider(chosen["name"], "error", time.perf_counter() - provider_t0)
-        record_request("provider_error", time.perf_counter() - t0)
+        request.state.metric_outcome = "provider_error"
         # P0: surface the error. P1 (Member B) adds retry + circuit breaker + failover here.
         log.info(f'{{"request_id":"{request_id}","event":"provider_error","provider":"{chosen["name"]}","err":"{e}"}}')
         raise HTTPException(status_code=502, detail=f"provider {chosen['name']} failed: {e}")
@@ -146,7 +174,7 @@ def chat_completions(req: GatewayRequest):
 
     # 5. store in cache for next identical request —— key 用同一个 cache_scope/quality/max_cost_usd，保证查/存一致
     CACHE.set(key, {"answer": result.content, "tokens": card.tokens.model_dump()})
-    record_request("success", time.perf_counter() - t0)
+    request.state.metric_outcome = "success"
     log.info(f'{{"request_id":"{request_id}","event":"served","provider":"{chosen["name"]}","cost":{cost},"latency_ms":{latency_ms}}}')
     return _envelope(result.content, card)
 

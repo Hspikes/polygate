@@ -17,7 +17,7 @@ FAKE_ADAPTER=1 uvicorn app.main:app --reload   # 用假 Adapter，返回罐头�
 
 Gateway 在 `GET /metrics` 暴露 Prometheus 文本格式的运行指标。它记录：
 
-- 请求结果与端到端耗时
+- 每个聊天请求的结果与端到端耗时，包括 400/403/422 客户端错误
 - 缓存命中/未命中
 - 各 Provider 的调用结果与耗时
 - 成功调用消耗的输入/输出 token
@@ -29,7 +29,11 @@ Gateway 在 `GET /metrics` 暴露 Prometheus 文本格式的运行指标。它�
 curl http://localhost:8000/metrics
 ```
 
-指标标签只包含 Provider 和有限的结果类型；`request_id`、prompt、路由原因和原始错误文本继续写入日志，不进入指标标签。
+每个 `POST /v1/chat/completions` 只计数一次。请求结果包括
+`success`、`cache_hit`、`client_error`、`routing_error`、
+`provider_error` 和未预期的 `server_error`。指标标签只包含 Provider
+和这些有限的结果类型；`request_id`、prompt、路由原因和原始错误文本
+继续写入日志，不进入指标标签。
 
 ## 接入 B 的 Mock（第 3 天集成）
 去掉 `FAKE_ADAPTER=1`，用 `docker compose up` 起全套即可。

@@ -75,7 +75,17 @@ import json
 import sys
 
 body = json.load(sys.stdin)
-required = {"generated_at", "window", "gateway", "cache", "usage", "providers", "resources"}
+required = {
+    "generated_at",
+    "window",
+    "gateway",
+    "cache",
+    "usage",
+    "providers",
+    "resources",
+    "partial",
+    "warnings",
+}
 raise SystemExit(0 if required.issubset(body) else 1)
 '; then
   ok "Overview response contains the stable top-level contract"
@@ -116,6 +126,41 @@ if [ "$RESOURCES_AVAILABLE" = "False" ]; then
   ok "Local response explicitly marks Kubernetes resources unavailable"
 else
   bad "Unexpected local resources.available value: $RESOURCES_AVAILABLE"
+fi
+
+PARTIAL="$(echo "$AFTER_JSON" | overview_value partial 2>/dev/null || echo missing)"
+if [ "$PARTIAL" = "False" ]; then
+  ok "Healthy Gateway data is not marked partial"
+else
+  bad "Unexpected partial value while Gateway is healthy: $PARTIAL"
+fi
+
+CLIENT_ERROR_BEFORE="$AFTER"
+INVALID_CODE="$(
+  curl -sS -o /dev/null -w "%{http_code}" \
+    -X POST "$GATEWAY/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"does-not-exist","messages":[{"role":"user","content":"monitoring client error smoke test"}]}'
+)"
+if [ "$INVALID_CODE" = "400" ]; then
+  ok "Gateway rejected the invalid provider with HTTP 400"
+else
+  bad "Expected invalid provider to return HTTP 400, got $INVALID_CODE"
+fi
+sleep 7
+
+CLIENT_ERROR_JSON="$(
+  curl -fsS "$MONITORING_API/api/monitoring/overview?window=15m" \
+    2>/dev/null || echo '{}'
+)"
+CLIENT_ERROR_AFTER="$(
+  echo "$CLIENT_ERROR_JSON" \
+    | overview_value gateway.requests_total 2>/dev/null || echo 0
+)"
+if python3 -c "raise SystemExit(0 if int('$CLIENT_ERROR_AFTER') > int('$CLIENT_ERROR_BEFORE') else 1)"; then
+  ok "Monitoring API counts rejected client requests ($CLIENT_ERROR_BEFORE -> $CLIENT_ERROR_AFTER)"
+else
+  bad "Monitoring API did not count the rejected client request ($CLIENT_ERROR_BEFORE -> $CLIENT_ERROR_AFTER)"
 fi
 
 echo
