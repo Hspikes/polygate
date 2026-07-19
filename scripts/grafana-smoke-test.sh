@@ -115,6 +115,8 @@ expected = (
     and len(panels) >= 10
     and any("polygate_requests_total" in expr for expr in expressions)
     and any("polygate_provider_requests_total" in expr for expr in expressions)
+    and any(".*_error" in expr for expr in expressions)
+    and all("clamp_min" not in expr for expr in expressions)
 )
 raise SystemExit(0 if expected else 1)
 '; then

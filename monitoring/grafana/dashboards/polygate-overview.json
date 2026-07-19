@@ -274,7 +274,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Share of routing and provider errors among all requests.",
+      "description": "Share of client, routing, provider, and unexpected server errors among all requests.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -284,6 +284,7 @@
           "mappings": [],
           "max": 1,
           "min": 0,
+          "noValue": "N/A",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -337,7 +338,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(polygate_requests_total{outcome=~\"routing_error|provider_error\"}[$__rate_interval])) / clamp_min(sum(rate(polygate_requests_total[$__rate_interval])), 1e-12)",
+          "expr": "(sum(rate(polygate_requests_total{outcome=~\".*_error\"}[$__rate_interval])) or vector(0)) / sum(rate(polygate_requests_total[$__rate_interval]))",
           "instant": false,
           "legendFormat": "Error rate",
           "range": true,
@@ -701,6 +702,7 @@
           "mappings": [],
           "max": 1,
           "min": 0,
+          "noValue": "N/A",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -752,7 +754,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(polygate_cache_requests_total{result=\"hit\"}[$__rate_interval])) / clamp_min(sum(rate(polygate_cache_requests_total[$__rate_interval])), 1e-12)",
+          "expr": "(sum(rate(polygate_cache_requests_total{result=\"hit\"}[$__rate_interval])) or vector(0)) / sum(rate(polygate_cache_requests_total[$__rate_interval]))",
           "instant": false,
           "legendFormat": "Cache hit rate",
           "range": true,
@@ -1167,6 +1169,7 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "N/A",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1215,7 +1218,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (provider) (rate(polygate_provider_requests_total{outcome=\"success\"}[$__rate_interval])) / clamp_min(sum by (provider) (rate(polygate_provider_requests_total[$__rate_interval])), 1e-12)",
+          "expr": "(sum by (provider) (rate(polygate_provider_requests_total{outcome=\"success\"}[$__rate_interval])) or on (provider) (0 * sum by (provider) (rate(polygate_provider_requests_total[$__rate_interval])))) / sum by (provider) (rate(polygate_provider_requests_total[$__rate_interval]))",
           "instant": false,
           "legendFormat": "{{provider}}",
           "range": true,
