@@ -12,13 +12,13 @@ Window = Literal["5m", "15m", "1h", "6h"]
 class GatewayMetrics(BaseModel):
     requests_total: int = Field(ge=0)
     requests_per_second: float = Field(ge=0)
-    error_rate: float = Field(ge=0, le=1)
+    error_rate: float | None = Field(default=None, ge=0, le=1)
     p95_latency_ms: float | None = Field(default=None, ge=0)
 
 
 class CacheMetrics(BaseModel):
     lookups_total: int = Field(ge=0)
-    hit_rate: float = Field(ge=0, le=1)
+    hit_rate: float | None = Field(default=None, ge=0, le=1)
 
 
 class UsageMetrics(BaseModel):
@@ -30,7 +30,7 @@ class UsageMetrics(BaseModel):
 class ProviderMetrics(BaseModel):
     name: str
     requests: int = Field(ge=0)
-    success_rate: float = Field(ge=0, le=1)
+    success_rate: float | None = Field(default=None, ge=0, le=1)
     p95_latency_ms: float | None = Field(default=None, ge=0)
 
 
