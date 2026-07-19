@@ -13,6 +13,24 @@ FAKE_ADAPTER=1 uvicorn app.main:app --reload   # 用假 Adapter，返回罐头�
 ```
 访问 http://localhost:8000/providers 看注册表；POST /v1/chat/completions 测路由。
 
+## Gateway 指标
+
+Gateway 在 `GET /metrics` 暴露 Prometheus 文本格式的运行指标。它记录：
+
+- 请求结果与端到端耗时
+- 缓存命中/未命中
+- 各 Provider 的调用结果与耗时
+- 成功调用消耗的输入/输出 token
+- 成功调用的估算费用
+
+本地启动 Gateway 后可直接检查：
+
+```bash
+curl http://localhost:8000/metrics
+```
+
+指标标签只包含 Provider 和有限的结果类型；`request_id`、prompt、路由原因和原始错误文本继续写入日志，不进入指标标签。
+
 ## 接入 B 的 Mock（第 3 天集成）
 去掉 `FAKE_ADAPTER=1`，用 `docker compose up` 起全套即可。
 

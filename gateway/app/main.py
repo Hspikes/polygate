@@ -10,8 +10,9 @@ import os
 import time
 import uuid
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST
 
 from app.models import GatewayRequest, DecisionCard, Tokens
 from app.registry import load_providers
@@ -19,6 +20,13 @@ from app.router import select_provider
 from app.adapters import call_provider
 from app.cache import Cache, cache_key
 from app.cost import estimate_cost
+from app.metrics import (
+    record_cache,
+    record_provider,
+    record_request,
+    record_usage,
+    render_metrics,
+)
 
 logging.basicConfig(level=logging.INFO, format='{"ts":"%(asctime)s","lvl":"%(levelname)s","msg":%(message)s}')
 log = logging.getLogger("polygate")
@@ -35,6 +43,12 @@ HEALTH: dict[str, str] = {}
 @app.get("/health")
 def health():
     return {"status": "ok", "providers": [p["name"] for p in PROVIDERS], "cache": CACHE.enabled}
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    """Prometheus scrape endpoint for gateway business and process metrics."""
+    return Response(content=render_metrics(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/providers")
@@ -63,14 +77,17 @@ def chat_completions(req: GatewayRequest):
     key = cache_key(messages, c.privacy)
     cached = CACHE.get(key)
     if cached:
+        record_cache("hit")
         latency_ms = int((time.perf_counter() - t0) * 1000)
         card = DecisionCard(
             chosen_provider="cache", reason="精确缓存命中，未调用任何 Provider，成本为 0",
             cache_hit=True, cost_estimate_usd=0.0, latency_ms=latency_ms,
             tokens=Tokens(**cached["tokens"]), request_id=request_id,
         )
+        record_request("cache_hit", time.perf_counter() - t0)
         log.info(f'{{"request_id":"{request_id}","event":"cache_hit"}}')
         return _envelope(cached["answer"], card)
+    record_cache("miss")
 
     # 2. route (or honor a forced model == provider name)
     forced = next((p for p in PROVIDERS if p["name"] == req.model), None) if req.model != "auto" else None
@@ -80,15 +97,20 @@ def chat_completions(req: GatewayRequest):
         else:
             chosen, reason, _ = select_provider(PROVIDERS, messages, c, HEALTH)
     except RuntimeError as e:
+        record_request("routing_error", time.perf_counter() - t0)
         raise HTTPException(status_code=503, detail=str(e))
 
     # 3. call provider via adapter
+    provider_t0 = time.perf_counter()
     try:
         result = call_provider(chosen, messages)
     except Exception as e:
+        record_provider(chosen["name"], "error", time.perf_counter() - provider_t0)
+        record_request("provider_error", time.perf_counter() - t0)
         # P0: surface the error. P1 (Member B) adds retry + circuit breaker + failover here.
         log.info(f'{{"request_id":"{request_id}","event":"provider_error","provider":"{chosen["name"]}","err":"{e}"}}')
         raise HTTPException(status_code=502, detail=f"provider {chosen['name']} failed: {e}")
+    record_provider(chosen["name"], "success", time.perf_counter() - provider_t0)
 
     # 4. cost + decision card
     cost = estimate_cost(chosen, result.input_tokens, result.output_tokens)
@@ -99,9 +121,16 @@ def chat_completions(req: GatewayRequest):
         tokens=Tokens(input=result.input_tokens, output=result.output_tokens),
         request_id=request_id,
     )
+    record_usage(
+        provider=chosen["name"],
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        estimated_cost_usd=cost,
+    )
 
     # 5. store in cache for next identical request
     CACHE.set(key, {"answer": result.content, "tokens": card.tokens.model_dump()})
+    record_request("success", time.perf_counter() - t0)
     log.info(f'{{"request_id":"{request_id}","event":"served","provider":"{chosen["name"]}","cost":{cost},"latency_ms":{latency_ms}}}')
     return _envelope(result.content, card)
 
