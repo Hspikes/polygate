@@ -12,6 +12,14 @@ cd web && python -m http.server 8080   # 另开终端，打开 http://localhost:
 ```
 在页面里提交问题 → 看答案 + 决策卡片；再提交一次相同问题 → 看到缓存命中、成本 $0。
 
+本地 Compose 还会启动 Prometheus：
+
+- 指标查询：<http://localhost:9090>
+- 采集目标：<http://localhost:9090/targets>
+- 自动检查：`./scripts/prometheus-smoke-test.sh`
+
+详细说明见 [`monitoring/README.md`](./monitoring/README.md)。
+
 ## 目录 = 分工（各写各的，互不阻塞）
 | 目录 | 主责 | 一句话 | 独立开发方式 |
 |---|---|---|---|
