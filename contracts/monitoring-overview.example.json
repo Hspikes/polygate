@@ -1,0 +1,36 @@
+{
+  "generated_at": "2026-07-19T06:00:00Z",
+  "window": "15m",
+  "gateway": {
+    "requests_total": 25,
+    "requests_per_second": 0.12,
+    "error_rate": 0.04,
+    "p95_latency_ms": 420.0
+  },
+  "cache": {
+    "lookups_total": 25,
+    "hit_rate": 0.35
+  },
+  "usage": {
+    "input_tokens": 1200,
+    "output_tokens": 500,
+    "estimated_cost_usd": 0.0042
+  },
+  "providers": [
+    {
+      "name": "mock-a",
+      "requests": 15,
+      "success_rate": 1.0,
+      "p95_latency_ms": 310.0
+    }
+  ],
+  "resources": {
+    "available": false,
+    "cpu_cores": null,
+    "memory_bytes": null,
+    "current_replicas": null,
+    "desired_replicas": null
+  },
+  "partial": false,
+  "warnings": []
+}
