@@ -24,7 +24,7 @@ services:
     environment:
       REDIS_URL: redis://redis:6379/0
       PROVIDERS_FILE: /app/providers.yaml
-      # REAL_A_API_KEY: set this in a local .env (never commit it) to enable real-a
+      REAL_A_API_KEY:  ${REAL_A_API_KEY}
     ports: ["8000:8000"]
     volumes:
       - ./contracts/providers.yaml:/app/providers.yaml:ro
