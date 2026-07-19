@@ -5,8 +5,9 @@
 # Acceptable for this project — Redis here is a CACHE, not a source of truth. If it happens
 # right before a demo, just re-run one request first to "warm" the cache again.
 #
-# Swap back to deploy/redis.yaml (PVC-based) any time the EBS CSI Driver gets sorted out —
-# nothing else in the stack needs to change, same Service name/port.
+# Swap to deploy/reference/redis-pvc.yaml any time the EBS CSI Driver gets sorted
+# out. Nothing else in the stack needs to change; it uses the same Service name
+# and port.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,6 +25,16 @@ spec:
           resources:
             requests: { cpu: "50m", memory: "64Mi" }
             limits:   { cpu: "200m", memory: "256Mi" }
+          readinessProbe:
+            exec:
+              command: [redis-cli, ping]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: [redis-cli, ping]
+            initialDelaySeconds: 10
+            periodSeconds: 10
           volumeMounts:
             - { name: data, mountPath: /data }
       volumes:
