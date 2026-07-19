@@ -73,8 +73,23 @@ def chat_completions(req: GatewayRequest):
     messages = [m.model_dump() for m in req.messages]
     t0 = time.perf_counter()
 
-    # 1. cache lookup (before choosing a provider, so identical requests always hit)
-    key = cache_key(messages, c.privacy)
+    # 0. 先解析 forced provider，并在查缓存之前完成存在性 + 隐私校验
+    #    这一步必须在 cache lookup 之前，否则未知/越权的强制指定会被缓存直接放行（见 code review @V）
+    forced = None
+    if req.model != "auto":
+        forced = next((p for p in PROVIDERS if p["name"] == req.model), None)
+        if forced is None:
+            raise HTTPException(status_code=400, detail=f"未知的 provider: {req.model}")
+        if c.privacy == "high" and forced.get("privacy") == "external":
+            raise HTTPException(
+                status_code=403,
+                detail=f"privacy=high 禁止强制路由到外部 Provider {forced['name']}"
+            )
+
+    # 1. cache lookup —— key 里带上 forced provider 的身份（cache_scope），
+    #    避免"强制指定 mock-b"被"mock-a 的历史缓存"张冠李戴
+    cache_scope = forced["name"] if forced else "auto"
+    key = cache_key(messages, c.privacy, cache_scope)
     cached = CACHE.get(key)
     if cached:
         record_cache("hit")
@@ -89,22 +104,9 @@ def chat_completions(req: GatewayRequest):
         return _envelope(cached["answer"], card)
     record_cache("miss")
 
-    # 2. route (or honor a forced model == provider name)
-    #    问题2修复：显式指定了不存在的 provider 名字时直接报错，不静默 fallback 到自动路由
-    forced = None
-    if req.model != "auto":
-        forced = next((p for p in PROVIDERS if p["name"] == req.model), None)
-        if forced is None:
-            raise HTTPException(status_code=400, detail=f"未知的 provider: {req.model}")
-
+    # 2. route（forced 已在上面解析并校验过，这里直接使用）
     try:
         if forced:
-            # 问题1修复：强制指定 provider 时依然要执行隐私硬约束校验，不能绕过
-            if c.privacy == "high" and forced.get("privacy") == "external":
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"privacy=high 禁止强制路由到外部 Provider {forced['name']}"
-                )
             chosen, reason = forced, f"用户强制指定 {forced['name']}"
         else:
             chosen, reason, _ = select_provider(PROVIDERS, messages, c, HEALTH)
@@ -140,7 +142,7 @@ def chat_completions(req: GatewayRequest):
         estimated_cost_usd=cost,
     )
 
-    # 5. store in cache for next identical request
+    # 5. store in cache for next identical request —— key 用同一个 cache_scope，保证查/存一致
     CACHE.set(key, {"answer": result.content, "tokens": card.tokens.model_dump()})
     record_request("success", time.perf_counter() - t0)
     log.info(f'{{"request_id":"{request_id}","event":"served","provider":"{chosen["name"]}","cost":{cost},"latency_ms":{latency_ms}}}')

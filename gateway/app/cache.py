@@ -14,10 +14,15 @@ def normalize(messages: list[dict]) -> list[dict]:
     return [{"role": m["role"], "content": m["content"].strip()} for m in messages]
 
 
-def cache_key(messages: list[dict], privacy: str) -> str:
-    payload = json.dumps(normalize(messages), ensure_ascii=False) + "|" + privacy
+def cache_key(messages: list[dict], privacy: str, scope: str = "auto") -> str:
+    """
+    scope: 区分"自动路由"和"强制指定某个 provider"的缓存空间。
+    - scope="auto"        自动路由请求共享同一份缓存
+    - scope="<provider名>" 强制指定该 provider 的请求，只和同样强制指定该 provider 的请求共享缓存
+    这样可以避免：强制指定 provider-B 的请求，被 provider-A 的历史缓存"张冠李戴"。
+    """
+    payload = json.dumps(normalize(messages), ensure_ascii=False) + "|" + privacy + "|" + scope
     return "pg:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
 
 class Cache:
     """Thin wrapper; degrades to a no-op if Redis is unreachable so local dev never blocks."""
