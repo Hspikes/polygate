@@ -73,9 +73,21 @@ def chat_completions(req: GatewayRequest):
         return _envelope(cached["answer"], card)
 
     # 2. route (or honor a forced model == provider name)
-    forced = next((p for p in PROVIDERS if p["name"] == req.model), None) if req.model != "auto" else None
+    #    问题2修复：显式指定了不存在的 provider 名字时直接报错，不静默 fallback 到自动路由
+    forced = None
+    if req.model != "auto":
+        forced = next((p for p in PROVIDERS if p["name"] == req.model), None)
+        if forced is None:
+            raise HTTPException(status_code=400, detail=f"未知的 provider: {req.model}")
+
     try:
         if forced:
+            # 问题1修复：强制指定 provider 时依然要执行隐私硬约束校验，不能绕过
+            if c.privacy == "high" and forced.get("privacy") == "external":
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"privacy=high 禁止强制路由到外部 Provider {forced['name']}"
+                )
             chosen, reason = forced, f"用户强制指定 {forced['name']}"
         else:
             chosen, reason, _ = select_provider(PROVIDERS, messages, c, HEALTH)
