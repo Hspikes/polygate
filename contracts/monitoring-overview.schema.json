@@ -23,7 +23,7 @@
       "properties": {
         "requests_total": { "type": "integer", "minimum": 0 },
         "requests_per_second": { "type": "number", "minimum": 0 },
-        "error_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "error_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
         "p95_latency_ms": { "type": ["number", "null"], "minimum": 0 }
       }
     },
@@ -32,7 +32,7 @@
       "required": ["lookups_total", "hit_rate"],
       "properties": {
         "lookups_total": { "type": "integer", "minimum": 0 },
-        "hit_rate": { "type": "number", "minimum": 0, "maximum": 1 }
+        "hit_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
       }
     },
     "usage": {
@@ -52,7 +52,7 @@
         "properties": {
           "name": { "type": "string" },
           "requests": { "type": "integer", "minimum": 0 },
-          "success_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+          "success_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
           "p95_latency_ms": { "type": ["number", "null"], "minimum": 0 }
         }
       }
