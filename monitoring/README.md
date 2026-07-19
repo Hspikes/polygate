@@ -1,14 +1,15 @@
 # Local monitoring
 
-This directory contains the first monitoring stage: a local Prometheus server
-that periodically reads the Gateway's `GET /metrics` endpoint.
+This directory contains the local monitoring backend: Prometheus periodically
+reads the Gateway's `GET /metrics` endpoint, and Monitoring API turns fixed
+Prometheus queries into stable frontend-facing JSON.
 
 ```text
-Gateway /metrics -> Prometheus -> Prometheus query UI/API
+Gateway /metrics -> Prometheus -> Monitoring API
 ```
 
-This stage covers Gateway business metrics only. Grafana, Monitoring API,
-Kubernetes Pod metrics, and HPA data are separate later stages.
+This stage covers Gateway business metrics only. Grafana, the monitoring
+frontend, Kubernetes Pod metrics, and HPA data are separate later stages.
 
 ## Start
 
@@ -30,16 +31,43 @@ Useful endpoints:
 - Prometheus UI: <http://localhost:9090>
 - Prometheus targets: <http://localhost:9090/targets>
 - Prometheus readiness: <http://localhost:9090/-/ready>
+- Monitoring API health: <http://localhost:8010/health>
+- Monitoring overview: <http://localhost:8010/api/monitoring/overview>
 
-Run the automated local check after the stack starts:
+Run both automated local checks after the stack starts:
 
 ```bash
 ./scripts/prometheus-smoke-test.sh
+./scripts/monitoring-api-smoke-test.sh
 ```
 
-It verifies that Prometheus is ready, the Gateway target is `UP`, and a new
-Gateway request causes `polygate_requests_total` to increase after the next
-scrape.
+They verify that Prometheus is ready, the Gateway target is `UP`, and both
+Prometheus and Monitoring API observe new Gateway requests.
+
+## Monitoring API
+
+The API accepts a fixed window rather than arbitrary PromQL:
+
+```bash
+curl "http://localhost:8010/api/monitoring/overview?window=15m"
+```
+
+Allowed windows are `5m`, `15m`, `1h`, and `6h`. The response contract is
+defined in:
+
+- `contracts/monitoring-overview.schema.json`
+- `contracts/monitoring-overview.example.json`
+
+The local response sets `resources.available` to `false`. CPU, memory, and HPA
+replicas will be filled in later when Kubernetes resource metrics are connected.
+
+Run the API unit tests inside its Docker image; no host Python environment is
+required:
+
+```bash
+docker compose run --rm monitoring-api \
+  python -m unittest discover -s tests -v
+```
 
 ## Useful starter queries
 
@@ -73,3 +101,5 @@ If the Prometheus target is `DOWN`:
 3. Check logs with `docker compose logs gateway prometheus`.
 4. Keep the target as `gateway:8000`, not `localhost:8000`: from inside the
    Prometheus container, `localhost` means the Prometheus container itself.
+5. Monitoring API must use `http://prometheus:9090`, not `localhost:9090`, for
+   the same container-network reason.
