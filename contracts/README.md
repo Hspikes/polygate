@@ -13,6 +13,7 @@
 | 3 | （见 `providers/mock/README.md` 的 `/admin/config`） | Mock 故障注入接口 | B | D |
 | 4 | `providers.yaml` | Provider 注册表（价格/隐私/endpoint） | A（B 校对价格） | A 路由、D 卡片 |
 | 5 | Adapter 统一响应格式（见下） | 各 Provider → 网关的归一化格式 | B | A |
+| 6 | `monitoring-overview.schema.json` + `.example.json` | 监控总览 JSON | Monitoring API | 监控前端 |
 
 ## 契约 #5：Adapter 统一响应格式
 
