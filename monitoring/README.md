@@ -83,6 +83,23 @@ defined in:
 The local response sets `resources.available` to `false`. CPU, memory, and HPA
 replicas will be filled in later when Kubernetes resource metrics are connected.
 
+Ratio fields use `null` when the selected window contains no relevant traffic:
+
+- `gateway.error_rate` is `null` when there are no Gateway requests.
+- `cache.hit_rate` is `null` when there are no cache lookups.
+- `providers[].success_rate` is `null` when that provider has no calls.
+
+This is different from `0`, which means traffic existed and none of it matched
+the numerator (for example, a provider received calls but none succeeded).
+Grafana renders unavailable ratios as `N/A`.
+
+`partial` becomes `true` when Prometheus reports the Gateway scrape target as
+down or cannot find that target. In that case, `warnings` explains that values
+may be incomplete or stale. With a healthy target but no traffic, `partial`
+remains `false` and `warnings` explains which rate-based fields are unavailable.
+If Prometheus cannot execute the fixed queries at all, the endpoint still
+returns HTTP 502 rather than a partial response.
+
 Run the API unit tests inside its Docker image; no host Python environment is
 required:
 
