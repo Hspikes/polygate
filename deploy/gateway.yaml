@@ -4,10 +4,40 @@ kind: ConfigMap
 metadata: { name: providers-config }
 data:
   providers.yaml: |
-    # C: keep this in sync with contracts/providers.yaml, but point endpoints at
-    # in-cluster service DNS (http://mock-a:8080/... instead of localhost).
-    # For P0 you can also bake providers.yaml into the image; ConfigMap is cleaner.
-    placeholder: "replace with contracts/providers.yaml (cluster endpoints)"
+    # Cluster version of contracts/providers.yaml.
+    # Differences from the local (compose) version:
+    #   - mock endpoints use in-cluster service DNS (same names as compose services, so identical here)
+    #   - real-a endpoint hardcoded to its default (no shell ${VAR:-default} expansion needed;
+    #     the gateway still reads the API key from the REAL_A_API_KEY env var / Secret)
+    
+    providers:
+      - name: real-a
+        kind: real
+        endpoint: https://api.deepseek.com/v1/chat/completions
+        api_key_env: REAL_A_API_KEY
+        model: deepseek-chat
+        price_per_1k_input: 0.0005
+        price_per_1k_output: 0.0015
+        privacy: external
+        typical_latency_ms: 1500
+      - name: mock-a
+        kind: mock
+        endpoint: http://mock-a:8080/v1/chat/completions
+        admin_endpoint: http://mock-a:8080/admin/config
+        model: mock-fast
+        price_per_1k_input: 0.0001
+        price_per_1k_output: 0.0002
+        privacy: internal
+        typical_latency_ms: 300
+      - name: mock-b
+        kind: mock
+        endpoint: http://mock-b:8080/v1/chat/completions
+        admin_endpoint: http://mock-b:8080/admin/config
+        model: mock-cheap
+        price_per_1k_input: 0.00005
+        price_per_1k_output: 0.00008
+        privacy: internal
+        typical_latency_ms: 900
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -20,7 +50,7 @@ spec:
     spec:
       containers:
         - name: gateway
-          image: REGISTRY/polygate-gateway:latest   # C: replace REGISTRY
+          image: 896133844534.dkr.ecr.us-east-1.amazonaws.com/polygate-gateway:v1
           ports: [{ containerPort: 8000 }]
           env:
             - { name: REDIS_URL, value: "redis://redis:6379/0" }
