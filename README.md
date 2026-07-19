@@ -12,13 +12,15 @@ cd web && python -m http.server 8080   # 另开终端，打开 http://localhost:
 ```
 在页面里提交问题 → 看答案 + 决策卡片；再提交一次相同问题 → 看到缓存命中、成本 $0。
 
-本地 Compose 还会启动 Prometheus：
+本地 Compose 还会启动完整的监控链路：
 
 - 指标查询：<http://localhost:9090>
 - 采集目标：<http://localhost:9090/targets>
 - 自动检查：`./scripts/prometheus-smoke-test.sh`
 - 监控后端：<http://localhost:8010/api/monitoring/overview>
 - 后端检查：`./scripts/monitoring-api-smoke-test.sh`
+- Grafana 仪表盘：<http://localhost:3000/d/polygate-overview/polygate-overview>
+- 前后端联通检查：`./scripts/grafana-smoke-test.sh`
 
 详细说明见 [`monitoring/README.md`](./monitoring/README.md)。
 
