@@ -2,6 +2,7 @@
 # A/B/D develop here every day; only Member C touches EKS (until Day-4 integration).
 # Start everything:   docker compose up --build
 # Then open web/index.html in a browser (or serve web/ on :8080).
+# The monitoring dashboard is available at http://localhost:3000.
 services:
   redis:
     image: redis:7-alpine
@@ -58,5 +59,35 @@ services:
       retries: 3
       start_period: 10s
 
+  grafana:
+    image: grafana/grafana:12.4.0
+    depends_on: [prometheus]
+    environment:
+      # Local development is intentionally login-free. Do not copy this
+      # anonymous access setting into a public deployment.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      # The dashboard only uses Grafana's built-in Prometheus support.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/polygate-overview.json
+    ports: ["3000:3000"]
+    volumes:
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q --spider http://localhost:3000/api/health || exit 1
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+
 volumes:
   prometheus-data:
+  grafana-data:
