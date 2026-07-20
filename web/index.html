@@ -3,121 +3,1131 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>PolyGate · AI Workbench (P0)</title>
+<meta name="color-scheme" content="light" />
+<meta name="theme-color" content="#f7f6f2" />
+<title>PolyGate · Thoughtful AI routing</title>
 <style>
-  :root { --ink:#1f2937; --muted:#6b7280; --accent:#1d4e89; --line:#e5e7eb; --bg:#f7f8fa; --card:#fff; }
+  :root {
+    --page: #f7f6f2;
+    --surface: #fffdfa;
+    --surface-soft: #f1efe9;
+    --ink: #292724;
+    --ink-soft: #45413c;
+    --muted: #77716a;
+    --faint: #9a948c;
+    --line: #dedbd4;
+    --line-soft: #e9e6df;
+    --accent: #c15f3c;
+    --accent-dark: #a84b2e;
+    --accent-soft: #f5e8e1;
+    --sage: #647b68;
+    --sage-soft: #e8eee8;
+    --danger: #a23f35;
+    --danger-soft: #f7e9e6;
+    --shadow: 0 18px 55px rgba(56, 49, 40, .07);
+  }
+
   * { box-sizing: border-box; }
-  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--ink); background:var(--bg); }
-  .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; }
-  h1 { font-size: 24px; margin: 0 0 4px; }
-  .sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
-  textarea { width:100%; min-height:90px; padding:12px; border:1px solid var(--line); border-radius:10px; font:inherit; resize:vertical; }
-  .row { display:flex; gap:12px; flex-wrap:wrap; margin:12px 0; align-items:center; }
-  .row label { font-size:13px; color:var(--muted); display:flex; flex-direction:column; gap:4px; }
-  .row input, .row select { padding:8px; border:1px solid var(--line); border-radius:8px; font:inherit; }
-  button { background:var(--accent); color:#fff; border:0; padding:10px 18px; border-radius:8px; font-weight:600; cursor:pointer; }
-  button.secondary { background:#eef2f7; color:var(--accent); }
-  .answer { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; margin-top:20px; white-space:pre-wrap; }
-  .card { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:12px; padding:16px 18px; margin-top:14px; }
-  .card h3 { margin:0 0 10px; font-size:14px; color:var(--accent); text-transform:uppercase; letter-spacing:.04em; }
-  .kv { display:grid; grid-template-columns: 140px 1fr; gap:6px 12px; font-size:14px; }
-  .kv dt { color:var(--muted); }
-  .kv dd { margin:0; font-variant-numeric: tabular-nums; }
-  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
-  .pill.hit { background:#e6f4ea; color:#1e7e34; }
-  .pill.miss { background:#eef2f7; color:var(--muted); }
-  .err { color:#b3261e; }
-  code { background:#eef2f7; padding:1px 6px; border-radius:5px; }
+
+  html { min-width: 320px; }
+
+  body {
+    margin: 0;
+    color: var(--ink);
+    background: var(--page);
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button, textarea, input, select { font: inherit; }
+  button, select { cursor: pointer; }
+
+  button:focus-visible,
+  textarea:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  summary:focus-visible {
+    outline: 2px solid rgba(193, 95, 60, .42);
+    outline-offset: 3px;
+  }
+
+  .page-shell {
+    width: min(1040px, calc(100% - 40px));
+    margin: 0 auto;
+  }
+
+  .topbar {
+    height: 68px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--ink);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: -.015em;
+  }
+
+  .brand-mark {
+    width: 29px;
+    height: 29px;
+    display: grid;
+    place-items: center;
+    color: var(--accent);
+  }
+
+  .brand-mark svg { width: 27px; height: 27px; }
+
+  .endpoint {
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--muted);
+    background: rgba(255, 253, 250, .65);
+    font-size: 11px;
+  }
+
+  .endpoint-dot {
+    width: 6px;
+    height: 6px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: #6f8e73;
+  }
+
+  #ep-label {
+    max-width: 250px;
+    overflow: hidden;
+    color: var(--ink-soft);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  main {
+    width: min(900px, calc(100% - 40px));
+    margin: 0 auto;
+    padding: 64px 0 72px;
+  }
+
+  .intro {
+    margin: 0 auto 35px;
+    text-align: center;
+  }
+
+  .kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 13px;
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+
+  .kicker::before,
+  .kicker::after {
+    content: "";
+    width: 22px;
+    height: 1px;
+    background: rgba(193, 95, 60, .5);
+  }
+
+  h1 {
+    margin: 0;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: clamp(38px, 6vw, 52px);
+    font-weight: 400;
+    line-height: 1.08;
+    letter-spacing: -.035em;
+  }
+
+  .intro p {
+    max-width: 570px;
+    margin: 14px auto 0;
+    color: var(--muted);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  .prompt-card {
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    transition: border-color .2s ease, box-shadow .2s ease;
+  }
+
+  .prompt-card:focus-within {
+    border-color: #c9b4a9;
+    box-shadow: 0 20px 60px rgba(56, 49, 40, .09);
+  }
+
+  .prompt-label {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 20px 22px 0;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .prompt-label svg {
+    width: 16px;
+    height: 16px;
+    color: var(--accent);
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 148px;
+    display: block;
+    resize: vertical;
+    padding: 15px 22px 10px;
+    border: 0;
+    outline: 0;
+    color: var(--ink);
+    background: transparent;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 18px;
+    line-height: 1.62;
+  }
+
+  textarea::placeholder { color: #aaa39a; }
+
+  .prompt-toolbar {
+    min-height: 61px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 15px;
+    padding: 10px 12px 12px 20px;
+    border-top: 1px solid var(--line-soft);
+  }
+
+  .toolbar-left,
+  .toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .char-count {
+    color: var(--faint);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .text-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 9px;
+    color: var(--muted);
+    background: transparent;
+    font-size: 12px;
+    font-weight: 600;
+    transition: color .16s ease, background .16s ease;
+  }
+
+  .text-button:hover:not(:disabled) {
+    color: var(--ink);
+    background: var(--surface-soft);
+  }
+
+  .text-button:disabled,
+  .send-button:disabled {
+    cursor: wait;
+    opacity: .58;
+  }
+
+  .text-button svg { width: 15px; height: 15px; }
+
+  .shortcut {
+    color: var(--faint);
+    font-size: 10px;
+  }
+
+  kbd {
+    padding: 2px 5px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--surface-soft);
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 9px;
+  }
+
+  .send-button {
+    min-height: 39px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 14px 9px 16px;
+    border: 0;
+    border-radius: 11px;
+    color: #fffaf5;
+    background: var(--accent);
+    font-size: 12px;
+    font-weight: 700;
+    box-shadow: 0 7px 18px rgba(168, 75, 46, .16);
+    transition: background .16s ease, transform .16s ease;
+  }
+
+  .send-button:hover:not(:disabled) {
+    background: var(--accent-dark);
+    transform: translateY(-1px);
+  }
+
+  .send-button svg { width: 15px; height: 15px; }
+
+  .suggestions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+  }
+
+  .suggestion {
+    padding: 7px 11px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    color: var(--muted);
+    background: transparent;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 12px;
+    transition: color .16s ease, border-color .16s ease, background .16s ease;
+  }
+
+  .suggestion:hover {
+    border-color: var(--line);
+    color: var(--ink-soft);
+    background: rgba(255, 253, 250, .65);
+  }
+
+  .routing {
+    margin-top: 18px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 15px;
+    background: rgba(255, 253, 250, .48);
+  }
+
+  .routing summary {
+    min-height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 13px 17px;
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .routing summary::-webkit-details-marker { display: none; }
+
+  .routing-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    color: var(--ink-soft);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .routing-title svg {
+    width: 16px;
+    height: 16px;
+    color: var(--accent);
+  }
+
+  .routing-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--faint);
+    font-size: 10px;
+  }
+
+  .chevron {
+    width: 14px;
+    height: 14px;
+    transition: transform .18s ease;
+  }
+
+  .routing[open] .chevron { transform: rotate(180deg); }
+
+  .routing-body {
+    padding: 17px;
+    border-top: 1px solid var(--line-soft);
+  }
+
+  .fields {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .field label {
+    display: block;
+    margin-bottom: 7px;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .035em;
+    text-transform: uppercase;
+  }
+
+  .control-wrap { position: relative; }
+
+  .control {
+    width: 100%;
+    height: 40px;
+    padding: 0 11px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    outline: 0;
+    color: var(--ink-soft);
+    background: var(--surface);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    transition: border-color .16s ease, box-shadow .16s ease;
+  }
+
+  .control:focus {
+    border-color: #c8aa9d;
+    box-shadow: 0 0 0 3px rgba(193, 95, 60, .08);
+  }
+
+  select.control {
+    appearance: none;
+    padding-right: 30px;
+  }
+
+  .select-icon {
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    width: 13px;
+    height: 13px;
+    pointer-events: none;
+    color: var(--faint);
+    transform: translateY(-50%);
+  }
+
+  .input-prefix,
+  .input-suffix {
+    position: absolute;
+    top: 50%;
+    color: var(--faint);
+    font-size: 11px;
+    pointer-events: none;
+    transform: translateY(-50%);
+  }
+
+  .input-prefix { left: 11px; }
+  .input-suffix { right: 11px; }
+  .with-prefix { padding-left: 24px; }
+  .with-suffix { padding-right: 34px; }
+
+  .policy-note {
+    margin: 13px 0 0;
+    color: var(--faint);
+    font-size: 10px;
+    line-height: 1.5;
+  }
+
+  #out { margin-top: 44px; }
+
+  .result-stack {
+    display: grid;
+    gap: 22px;
+    animation: appear .3s ease both;
+  }
+
+  @keyframes appear {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .response {
+    position: relative;
+    padding-left: 47px;
+  }
+
+  .assistant-mark {
+    position: absolute;
+    top: 1px;
+    left: 0;
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    border: 1px solid #ead6cc;
+    border-radius: 10px;
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .assistant-mark svg { width: 18px; height: 18px; }
+
+  .response-head {
+    min-height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 8px;
+  }
+
+  .response-title {
+    margin: 0;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .copy-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 7px;
+    border: 0;
+    border-radius: 7px;
+    color: var(--faint);
+    background: transparent;
+    font-size: 10px;
+  }
+
+  .copy-button:hover {
+    color: var(--ink-soft);
+    background: var(--surface-soft);
+  }
+
+  .copy-button svg { width: 13px; height: 13px; }
+
+  .answer {
+    color: var(--ink-soft);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 16px;
+    line-height: 1.78;
+    white-space: pre-wrap;
+  }
+
+  .decision-card {
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: rgba(255, 253, 250, .72);
+  }
+
+  .decision-head {
+    min-height: 55px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 13px 17px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .decision-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    margin: 0;
+    color: var(--ink-soft);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .decision-title svg {
+    width: 16px;
+    height: 16px;
+    color: var(--accent);
+  }
+
+  .badges {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .provider-badge,
+  .cache-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 9px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .provider-badge {
+    color: var(--accent-dark);
+    background: var(--accent-soft);
+  }
+
+  .provider-badge::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  .cache-badge.hit {
+    color: var(--sage);
+    background: var(--sage-soft);
+  }
+
+  .cache-badge.miss {
+    color: var(--muted);
+    background: var(--surface-soft);
+  }
+
+  .decision-body { padding: 19px 20px 18px; }
+
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .metric {
+    min-width: 0;
+    padding: 2px 16px;
+    border-right: 1px solid var(--line-soft);
+  }
+
+  .metric:first-child { padding-left: 0; }
+  .metric:last-child { padding-right: 0; border-right: 0; }
+
+  .metric-label {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--faint);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+
+  .metric-value {
+    overflow: hidden;
+    display: block;
+    color: var(--ink);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 17px;
+    font-variant-numeric: tabular-nums;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .metric-value small {
+    color: var(--faint);
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 9px;
+  }
+
+  .reason {
+    display: grid;
+    grid-template-columns: 21px 1fr;
+    gap: 9px;
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line-soft);
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.65;
+  }
+
+  .reason svg {
+    width: 15px;
+    height: 15px;
+    margin-top: 1px;
+    color: var(--accent);
+  }
+
+  .reason strong {
+    color: var(--ink-soft);
+    font-weight: 700;
+  }
+
+  .trace {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 13px;
+    color: var(--faint);
+    font-size: 9px;
+  }
+
+  .trace code {
+    color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    overflow-wrap: anywhere;
+  }
+
+  .trace-meta {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 11px;
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    color: var(--muted);
+    background: rgba(255, 253, 250, .62);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 13px;
+  }
+
+  .state.error {
+    border-color: #e5cbc5;
+    color: var(--danger);
+    background: var(--danger-soft);
+  }
+
+  .spinner {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    border: 1.5px solid #dfd7cf;
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .75s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  footer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    margin-top: 48px;
+    color: var(--faint);
+    font-size: 10px;
+  }
+
+  footer svg { width: 13px; height: 13px; color: var(--accent); }
+
+  @media (max-width: 720px) {
+    main { padding-top: 46px; }
+    .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .routing-summary > span { display: none; }
+  }
+
+  @media (max-width: 520px) {
+    .page-shell,
+    main { width: min(100% - 28px, 1040px); }
+    .topbar { height: 62px; }
+    .endpoint-label { display: none; }
+    #ep-label { max-width: 150px; }
+    main { padding-top: 40px; padding-bottom: 48px; }
+    .intro { margin-bottom: 28px; }
+    .intro p { font-size: 14px; }
+    .prompt-label { padding-right: 17px; padding-left: 17px; }
+    textarea { min-height: 165px; padding-right: 17px; padding-left: 17px; font-size: 17px; }
+    .prompt-toolbar { align-items: flex-end; padding-left: 10px; }
+    .shortcut { display: none; }
+    .toolbar-left { gap: 3px; }
+    .send-button span { display: none; }
+    .send-button { width: 39px; padding: 0; justify-content: center; border-radius: 50%; }
+    .suggestions { gap: 3px; }
+    .suggestion { padding-right: 8px; padding-left: 8px; }
+    .fields { grid-template-columns: 1fr; }
+    .response { padding-left: 42px; }
+    .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 17px; }
+    .metric { padding-right: 12px; padding-left: 12px; }
+    .metric:nth-child(2) { padding-right: 0; border-right: 0; }
+    .metric:nth-child(3) { padding-left: 0; }
+    .decision-head { align-items: flex-start; }
+    .trace { align-items: flex-start; flex-direction: column; gap: 7px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important;
+    }
+  }
 </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>PolyGate · AI Workbench</h1>
-    <p class="sub">P0 skeleton — Member D owns this page. Talks to the gateway at <code id="ep-label"></code>.</p>
-
-    <textarea id="prompt" placeholder="Ask something…">Summarize the plot of Romeo and Juliet in two sentences.</textarea>
-
-    <div class="row">
-      <label>Quality
-        <select id="quality"><option>balanced</option><option>high</option><option>cheap</option></select>
-      </label>
-      <label>Privacy
-        <select id="privacy"><option>standard</option><option>high</option></select>
-      </label>
-      <label>Max cost (USD)
-        <input id="maxcost" type="number" step="0.0001" value="0.002" />
-      </label>
-      <label>Latency target (ms)
-        <input id="latency" type="number" value="3000" />
-      </label>
+  <header class="page-shell topbar">
+    <div class="brand" aria-label="PolyGate">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none">
+          <path d="M16 4.5v23M4.5 16h23M8 8l16 16M24 8 8 24" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="16" cy="16" r="4.1" fill="var(--page)" stroke="currentColor" stroke-width="1.8"/>
+        </svg>
+      </span>
+      <span>PolyGate</span>
     </div>
-
-    <div class="row">
-      <button id="send">Send</button>
-      <button id="demo" class="secondary">Load fixture (no backend)</button>
+    <div class="endpoint" title="Configured gateway endpoint">
+      <span class="endpoint-dot" aria-hidden="true"></span>
+      <span class="endpoint-label">Gateway</span>
+      <code id="ep-label"></code>
     </div>
+  </header>
 
-    <div id="out"></div>
-  </div>
+  <main>
+    <section class="intro">
+      <span class="kicker">Intelligent model routing</span>
+      <h1>Ask once. Route wisely.</h1>
+      <p>Share a prompt and let PolyGate quietly balance quality, privacy, cost, and speed.</p>
+    </section>
+
+    <section aria-label="Prompt workspace">
+      <div class="prompt-card">
+        <label class="prompt-label" for="prompt">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5L12 3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          What would you like to explore?
+        </label>
+        <textarea id="prompt" maxlength="8000" placeholder="Write your prompt here…">Summarize the plot of Romeo and Juliet in two sentences.</textarea>
+        <div class="prompt-toolbar">
+          <div class="toolbar-left">
+            <button id="demo" class="text-button" type="button">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M7 4v6M17 4v6M6 13h4v4H6z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Demo response
+            </button>
+            <span class="char-count" id="char-count">0 / 8,000</span>
+          </div>
+          <div class="toolbar-right">
+            <span class="shortcut"><kbd>Ctrl</kbd> <kbd>Enter</kbd></span>
+            <button id="send" class="send-button" type="button">
+              <span>Route prompt</span>
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 12 13-7-4 14-3-5-6-2Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="suggestions" aria-label="Example prompts">
+        <button class="suggestion" type="button" data-prompt="Explain cloud load balancing in simple terms.">Explain a concept</button>
+        <button class="suggestion" type="button" data-prompt="Write a concise project update for a cloud migration milestone.">Draft an update</button>
+        <button class="suggestion" type="button" data-prompt="Compare horizontal and vertical scaling in a short table.">Compare options</button>
+      </div>
+
+      <details class="routing" open>
+        <summary>
+          <span class="routing-title">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 7h14M8 12h8M10 17h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            Routing preferences
+          </span>
+          <span class="routing-summary">
+            <span>Balanced · Standard · $0.002 · 3000 ms</span>
+            <svg class="chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m7 10 5 5 5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+        </summary>
+        <div class="routing-body">
+          <div class="fields">
+            <div class="field">
+              <label for="quality">Quality</label>
+              <div class="control-wrap">
+                <select class="control" id="quality">
+                  <option value="balanced">Balanced</option>
+                  <option value="high">Best quality</option>
+                  <option value="cheap">Lowest cost</option>
+                </select>
+                <svg class="select-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m7 10 5 5 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+            </div>
+            <div class="field">
+              <label for="privacy">Privacy</label>
+              <div class="control-wrap">
+                <select class="control" id="privacy">
+                  <option value="standard">Standard</option>
+                  <option value="high">High privacy</option>
+                </select>
+                <svg class="select-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m7 10 5 5 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+            </div>
+            <div class="field">
+              <label for="maxcost">Maximum cost</label>
+              <div class="control-wrap">
+                <span class="input-prefix">$</span>
+                <input class="control with-prefix" id="maxcost" type="number" min="0" step="0.0001" value="0.002" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="latency">Latency target</label>
+              <div class="control-wrap">
+                <input class="control with-suffix" id="latency" type="number" min="1" step="100" value="3000" />
+                <span class="input-suffix">ms</span>
+              </div>
+            </div>
+          </div>
+          <p class="policy-note">These preferences are evaluated before any provider receives your request.</p>
+        </div>
+      </details>
+    </section>
+
+    <section id="out" aria-live="polite"></section>
+
+    <footer>
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 5 1.2 4.8L18 11l-4.8 1.2L12 17l-1.2-4.8L6 11l4.8-1.2L12 5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+      <span>Thoughtful routing for every request.</span>
+    </footer>
+  </main>
 
 <script>
-  // Point at your local gateway. Members: change if your port differs.
   const GATEWAY = localStorage.getItem("pg_gateway") || "http://localhost:8000";
+  const promptEl = document.getElementById("prompt");
+  const outEl = document.getElementById("out");
+  const sendButton = document.getElementById("send");
+  const demoButton = document.getElementById("demo");
+  const sendButtonLabel = sendButton.querySelector("span");
+
   document.getElementById("ep-label").textContent = GATEWAY;
 
-  function renderCard(answer, pg) {
-    const hit = pg.cache_hit;
-    return `
-      <div class="answer">${escapeHtml(answer)}</div>
-      <div class="card">
-        <h3>Decision card</h3>
-        <dl class="kv">
-          <dt>Provider</dt><dd><strong>${pg.chosen_provider}</strong></dd>
-          <dt>Reason</dt><dd>${escapeHtml(pg.reason)}</dd>
-          <dt>Cache</dt><dd><span class="pill ${hit?'hit':'miss'}">${hit?'HIT · $0':'MISS'}</span></dd>
-          <dt>Cost (est.)</dt><dd>$${Number(pg.cost_estimate_usd).toFixed(6)}</dd>
-          <dt>Latency</dt><dd>${pg.latency_ms} ms</dd>
-          <dt>Tokens</dt><dd>in ${pg.tokens.input} · out ${pg.tokens.output}</dd>
-          <dt>request_id</dt><dd><code>${pg.request_id}</code></dd>
-        </dl>
-      </div>`;
+  const icons = {
+    assistant: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3v18M3 12h18M5.7 5.7l12.6 12.6m0-12.6L5.7 18.3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="3" fill="var(--accent-soft)" stroke="currentColor" stroke-width="1.4"/></svg>',
+    route: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 4v4a4 4 0 0 0 4 4h8M6 20v-4a4 4 0 0 1 4-4M15 9l3 3-3 3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    reason: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 1.4 4.6L18 9l-4.6 1.4L12 15l-1.4-4.6L6 9l4.6-1.4L12 3Zm6 11 .8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8L18 14Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>',
+    copy: '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="1.7"/></svg>'
+  };
+
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, char => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[char]));
   }
 
-  function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  function formatCost(value, cacheHit) {
+    if (cacheHit) return "$0";
+    const cost = Number(value);
+    return Number.isFinite(cost) ? `$${cost.toFixed(6)}` : "—";
+  }
+
+  function formatNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number.toLocaleString() : "—";
+  }
+
+  function updateRoutingSummary() {
+    const quality = document.getElementById("quality");
+    const privacy = document.getElementById("privacy");
+    const maxCost = document.getElementById("maxcost").value || "—";
+    const latency = document.getElementById("latency").value || "—";
+    document.querySelector(".routing-summary > span").textContent =
+      `${quality.options[quality.selectedIndex].text} · ${privacy.options[privacy.selectedIndex].text} · $${maxCost} · ${latency} ms`;
+  }
+
+  function renderCard(answer, pg = {}) {
+    const hit = Boolean(pg.cache_hit);
+    const tokens = pg.tokens || {};
+    const retries = Number(pg.retries || 0);
+    const provider = escapeHtml(pg.chosen_provider || "Unknown");
+    const reason = escapeHtml(pg.reason || "No routing explanation was provided.");
+    const requestId = escapeHtml(pg.request_id || "Unavailable");
+    const failover = pg.failover_from
+      ? `<span>Failover from <strong>${escapeHtml(pg.failover_from)}</strong></span>`
+      : "";
+
+    outEl.innerHTML = `
+      <div class="result-stack">
+        <article class="response">
+          <span class="assistant-mark">${icons.assistant}</span>
+          <header class="response-head">
+            <h2 class="response-title">PolyGate response</h2>
+            <button class="copy-button" id="copy-answer" type="button" aria-label="Copy response">
+              ${icons.copy}<span>Copy</span>
+            </button>
+          </header>
+          <div class="answer" id="answer-text">${escapeHtml(answer || "No answer returned.")}</div>
+        </article>
+
+        <article class="decision-card">
+          <header class="decision-head">
+            <h2 class="decision-title">${icons.route} Routing note</h2>
+            <div class="badges">
+              <span class="provider-badge">${provider}</span>
+              <span class="cache-badge ${hit ? "hit" : "miss"}">${hit ? "Cache hit" : "Cache miss"}</span>
+            </div>
+          </header>
+          <div class="decision-body">
+            <div class="metrics">
+              <div class="metric">
+                <span class="metric-label">Estimated cost</span>
+                <span class="metric-value">${formatCost(pg.cost_estimate_usd, hit)}</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">Latency</span>
+                <span class="metric-value">${formatNumber(pg.latency_ms)} <small>ms</small></span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">Input tokens</span>
+                <span class="metric-value">${formatNumber(tokens.input)}</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">Output tokens</span>
+                <span class="metric-value">${formatNumber(tokens.output)}</span>
+              </div>
+            </div>
+            <div class="reason">
+              ${icons.reason}
+              <span><strong>Why this route?</strong>&nbsp; ${reason}</span>
+            </div>
+            <div class="trace">
+              <span>Request ID&nbsp; <code>${requestId}</code></span>
+              <span class="trace-meta">${failover}<span>Retries <strong>${formatNumber(retries)}</strong></span></span>
+            </div>
+          </div>
+        </article>
+      </div>`;
+
+    document.getElementById("copy-answer").addEventListener("click", copyAnswer);
+  }
+
+  function renderState(message, type = "loading") {
+    outEl.innerHTML = type === "loading"
+      ? `<div class="state"><span class="spinner" aria-hidden="true"></span><span>${escapeHtml(message)}</span></div>`
+      : `<div class="state error"><span aria-hidden="true">—</span><span>${escapeHtml(message)}</span></div>`;
+  }
+
+  function setBusy(isBusy) {
+    sendButton.disabled = isBusy;
+    demoButton.disabled = isBusy;
+    sendButtonLabel.textContent = isBusy ? "Routing…" : "Route prompt";
+  }
+
+  async function copyAnswer() {
+    const text = document.getElementById("answer-text")?.textContent || "";
+    const label = document.querySelector("#copy-answer span");
+    try {
+      await navigator.clipboard.writeText(text);
+      label.textContent = "Copied";
+      window.setTimeout(() => { label.textContent = "Copy"; }, 1400);
+    } catch {
+      label.textContent = "Select to copy";
+    }
+  }
 
   async function send() {
-    const out = document.getElementById("out");
-    out.innerHTML = "<p class='sub'>Sending…</p>";
+    const prompt = promptEl.value.trim();
+    const maxCost = Number(document.getElementById("maxcost").value);
+    const latency = Number(document.getElementById("latency").value);
+
+    if (!prompt) {
+      renderState("Write a prompt before sending your request.", "error");
+      promptEl.focus();
+      return;
+    }
+    if (!Number.isFinite(maxCost) || maxCost < 0 || !Number.isFinite(latency) || latency <= 0) {
+      renderState("Check the cost and latency preferences, then try again.", "error");
+      return;
+    }
+
     const payload = {
       model: "auto",
-      messages: [{ role: "user", content: document.getElementById("prompt").value }],
+      messages: [{ role: "user", content: prompt }],
       polygate: {
         quality: document.getElementById("quality").value,
         privacy: document.getElementById("privacy").value,
-        max_cost_usd: parseFloat(document.getElementById("maxcost").value),
-        latency_target_ms: parseInt(document.getElementById("latency").value, 10),
+        max_cost_usd: maxCost,
+        latency_target_ms: Math.round(latency)
       }
     };
+
+    setBusy(true);
+    renderState("Considering the best route for your request…");
+
     try {
-      const r = await fetch(`${GATEWAY}/v1/chat/completions`, {
-        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload)
+      const response = await fetch(`${GATEWAY}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
       });
-      if (!r.ok) { out.innerHTML = `<p class='err'>Gateway error ${r.status}: ${await r.text()}</p>`; return; }
-      const data = await r.json();
-      out.innerHTML = renderCard(data.answer ?? data.choices?.[0]?.message?.content ?? "", data.polygate);
-    } catch (e) {
-      out.innerHTML = `<p class='err'>Cannot reach gateway at ${GATEWAY}. Is it running? (${e})</p>`;
+      if (!response.ok) {
+        const detail = await response.text();
+        renderState(`Gateway error ${response.status}${detail ? `: ${detail}` : ""}`, "error");
+        return;
+      }
+      const data = await response.json();
+      renderCard(data.answer ?? data.choices?.[0]?.message?.content ?? "", data.polygate);
+    } catch {
+      renderState(`Cannot reach the gateway at ${GATEWAY}. Check that the service is running.`, "error");
+    } finally {
+      setBusy(false);
     }
   }
 
   async function loadFixture() {
-    const out = document.getElementById("out");
-    const data = await fetch("./fixtures/decision-card.example.json").then(r=>r.json());
-    out.innerHTML = renderCard(data.answer, data.polygate);
+    setBusy(true);
+    renderState("Preparing a sample routing note…");
+    try {
+      const response = await fetch("./fixtures/decision-card.example.json");
+      if (!response.ok) throw new Error(`Fixture returned ${response.status}`);
+      const data = await response.json();
+      renderCard(data.answer, data.polygate);
+    } catch {
+      renderState("Could not load the demo response. Run this page through a local web server.", "error");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  document.getElementById("send").onclick = send;
-  document.getElementById("demo").onclick = loadFixture;
+  function updateCharacterCount() {
+    document.getElementById("char-count").textContent =
+      `${promptEl.value.length.toLocaleString()} / 8,000`;
+  }
+
+  document.querySelectorAll("[data-prompt]").forEach(button => {
+    button.addEventListener("click", () => {
+      promptEl.value = button.dataset.prompt;
+      updateCharacterCount();
+      promptEl.focus();
+    });
+  });
+
+  ["quality", "privacy", "maxcost", "latency"].forEach(id => {
+    document.getElementById(id).addEventListener("input", updateRoutingSummary);
+  });
+
+  promptEl.addEventListener("input", updateCharacterCount);
+  promptEl.addEventListener("keydown", event => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      send();
+    }
+  });
+
+  sendButton.addEventListener("click", send);
+  demoButton.addEventListener("click", loadFixture);
+  updateCharacterCount();
+  updateRoutingSummary();
 </script>
 </body>
 </html>
