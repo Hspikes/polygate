@@ -43,7 +43,7 @@ for manifest in \
   docker run --rm --interactive "$KUBECONFORM_IMAGE" \
     -strict \
     -summary \
-    -kubernetes-version 1.35.0 < "$manifest"
+    -kubernetes-version 1.34.0 < "$manifest"
 done
 ok "All application Kubernetes manifests pass schema validation"
 
@@ -51,7 +51,7 @@ kubectl kustomize "$MANIFEST_DIR" \
   | docker run --rm --interactive "$KUBECONFORM_IMAGE" \
       -strict \
       -summary \
-      -kubernetes-version 1.35.0
+      -kubernetes-version 1.34.0
 ok "All rendered Kubernetes resources pass schema validation"
 
 docker run --rm \
@@ -162,14 +162,14 @@ fi
 ok "Monitoring API is intentionally absent from Kubernetes manifests"
 
 if grep -Fq \
-  "896133844534.dkr.ecr.us-east-1.amazonaws.com/polygate-gateway:v1" \
+  "356029564744.dkr.ecr.us-east-1.amazonaws.com/polygate-gateway:v2" \
   "$ROOT_DIR/deploy/gateway.yaml" \
   && grep -Fq \
-    "896133844534.dkr.ecr.us-east-1.amazonaws.com/polygate-mock:v1" \
+    "356029564744.dkr.ecr.us-east-1.amazonaws.com/polygate-mock:v1" \
     "$ROOT_DIR/deploy/mock-providers.yaml"; then
-  ok "Application deployment script can replace both pinned image anchors"
+  ok "Application manifests contain the current ECR image anchors"
 else
-  echo "Pinned application image anchors changed unexpectedly" >&2
+  echo "Current application image anchors are missing" >&2
   exit 1
 fi
 

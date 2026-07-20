@@ -4,14 +4,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ECR_REGISTRY="${ECR_REGISTRY:-896133844534.dkr.ecr.us-east-1.amazonaws.com}"
+ECR_REGISTRY="${ECR_REGISTRY:-356029564744.dkr.ecr.us-east-1.amazonaws.com}"
 IMAGE_TAG="${IMAGE_TAG:?Set IMAGE_TAG to the tag pushed by build-kubernetes-images.sh}"
 NAMESPACE="default"
 
 GATEWAY_IMAGE="$ECR_REGISTRY/polygate-gateway:$IMAGE_TAG"
 MOCK_IMAGE="$ECR_REGISTRY/polygate-mock:$IMAGE_TAG"
-PINNED_GATEWAY_IMAGE="896133844534.dkr.ecr.us-east-1.amazonaws.com/polygate-gateway:v1"
-PINNED_MOCK_IMAGE="896133844534.dkr.ecr.us-east-1.amazonaws.com/polygate-mock:v1"
+PINNED_GATEWAY_IMAGE="356029564744.dkr.ecr.us-east-1.amazonaws.com/polygate-gateway:v2"
+PINNED_MOCK_IMAGE="356029564744.dkr.ecr.us-east-1.amazonaws.com/polygate-mock:v1"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then

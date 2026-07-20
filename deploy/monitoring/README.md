@@ -53,14 +53,21 @@ The deployment script refuses to continue if this Secret is missing.
 
 ## Deploy
 
-Build, push, and deploy the application using one immutable Git-based image
-tag first:
+For the next application release, build, push, and deploy with one immutable
+Git-based image tag. The commands below target the current Learner Lab ECR
+account and build `linux/amd64` images for the x86_64 EKS nodes:
 
 ```bash
-PUSH_IMAGES=1 ./scripts/build-kubernetes-images.sh
+ECR_REGISTRY=356029564744.dkr.ecr.us-east-1.amazonaws.com \
+TARGET_PLATFORM=linux/amd64 \
+PUSH_IMAGES=1 \
+./scripts/build-kubernetes-images.sh
+
+# Reuse the IMAGE_TAG printed above.
 IMAGE_TAG=<tag printed above> ./scripts/deploy-kubernetes-application.sh
 ```
 
+Deploying Prometheus/Grafana alone does not require rebuilding the application.
 Then deploy monitoring:
 
 ```bash
