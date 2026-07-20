@@ -5,7 +5,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ECR_REGISTRY="${ECR_REGISTRY:-896133844534.dkr.ecr.us-east-1.amazonaws.com}"
+ECR_REGISTRY="${ECR_REGISTRY:-356029564744.dkr.ecr.us-east-1.amazonaws.com}"
+TARGET_PLATFORM="${TARGET_PLATFORM:-linux/amd64}"
 PUSH_IMAGES="${PUSH_IMAGES:-0}"
 
 if [ -z "${IMAGE_TAG:-}" ]; then
@@ -21,10 +22,12 @@ GATEWAY_IMAGE="$ECR_REGISTRY/polygate-gateway:$IMAGE_TAG"
 MOCK_IMAGE="$ECR_REGISTRY/polygate-mock:$IMAGE_TAG"
 
 docker build \
+  --platform "$TARGET_PLATFORM" \
   --pull \
   --tag "$GATEWAY_IMAGE" \
   "$ROOT_DIR/gateway"
 docker build \
+  --platform "$TARGET_PLATFORM" \
   --pull \
   --tag "$MOCK_IMAGE" \
   "$ROOT_DIR/providers/mock"
