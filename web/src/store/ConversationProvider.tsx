@@ -207,10 +207,12 @@ export function ConversationProvider({ children }: PropsWithChildren) {
       ({ id }) => id === stateRef.current.activeConversationId,
     );
     if (!conversation) return;
-    const index = conversation.messages.findLastIndex(
-      ({ role, status }) => role === "assistant" && status === "complete",
-    );
-    if (index < 0 || controllers.current.has(conversation.messages[index].id)) return;
+    const index = conversation.messages.findLastIndex(({ role }) => role === "assistant");
+    if (
+      index < 0
+      || conversation.messages[index].status !== "complete"
+      || controllers.current.has(conversation.messages[index].id)
+    ) return;
     const messageId = conversation.messages[index].id;
     const settings = { ...conversation.settings };
     dispatch({ type: "REGENERATE_RESPONSE", conversationId: conversation.id, messageId, settings });

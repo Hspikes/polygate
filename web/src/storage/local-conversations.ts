@@ -88,12 +88,18 @@ export function restoreState(storage: Pick<Storage, "getItem"> = localStorage): 
     if (!serialized) return { conversations: [], activeConversationId: null, hydrated: true };
     const parsed = persistedSchema.safeParse(migrate(JSON.parse(serialized)));
     if (!parsed.success) return { conversations: [], activeConversationId: null, hydrated: true };
-    const activeExists = parsed.data.conversations.some(({ id }) => id === parsed.data.activeConversationId);
+    const conversations = parsed.data.conversations.map((conversation) => ({
+      ...conversation,
+      messages: conversation.messages.map((message) =>
+        message.status === "sending" ? { ...message, status: "cancelled" as const } : message,
+      ),
+    }));
+    const activeExists = conversations.some(({ id }) => id === parsed.data.activeConversationId);
     return {
-      conversations: parsed.data.conversations,
+      conversations,
       activeConversationId: activeExists
         ? parsed.data.activeConversationId
-        : (parsed.data.conversations[0]?.id ?? null),
+        : (conversations[0]?.id ?? null),
       hydrated: true,
     };
   } catch {

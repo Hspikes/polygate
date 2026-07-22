@@ -61,4 +61,55 @@ describe("chat flow", () => {
     expect(composer).toHaveValue("line one\nline two");
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes("completions"))).toHaveLength(0));
   });
+
+  it("keeps correct history across ten sequential turns", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: "消息内容" });
+    for (let turn = 1; turn <= 10; turn += 1) {
+      await user.type(composer, `turn ${turn}{enter}`);
+      expect(await screen.findByText(`answer ${turn}`)).toBeInTheDocument();
+    }
+    const chatCalls = vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/v1/chat/completions");
+    const finalRequest = JSON.parse(String((chatCalls[9][1] as RequestInit).body)) as { messages: unknown[] };
+    expect(finalRequest.messages).toHaveLength(19);
+  });
+
+  it("surfaces provider errors and retries without duplicating the user message", async () => {
+    let attempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/health") return new Response("{}", { status: 200 });
+      attempts += 1;
+      if (attempts === 1) {
+        return new Response('{"detail":"provider mock-a failed"}', { status: 502 });
+      }
+      return new Response(JSON.stringify(responseBody("recovered")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }));
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    await user.type(await screen.findByRole("textbox", { name: "消息内容" }), "retry me{enter}");
+    expect(await screen.findByText("Provider 错误")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByText("recovered")).toBeInTheDocument();
+    expect(container.querySelectorAll(".user-message .message-bubble")).toHaveLength(1);
+    expect(container.querySelector(".user-message .message-bubble")).toHaveTextContent("retry me");
+  });
+
+  it("aborts an in-flight request and keeps it retryable", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === "/api/health") return Promise.resolve(new Response("{}", { status: 200 }));
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+    }));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByRole("textbox", { name: "消息内容" }), "cancel me{enter}");
+    await user.click(await screen.findByRole("button", { name: "取消生成" }));
+    expect(await screen.findByText("这次生成已取消。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
 });

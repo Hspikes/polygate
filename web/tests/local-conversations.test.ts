@@ -46,4 +46,18 @@ describe("local conversation storage", () => {
     expect(JSON.parse(storage.value ?? "{}")).toMatchObject({ schemaVersion: SCHEMA_VERSION });
     expect(STORAGE_KEY).toBe("polygate.conversations");
   });
+
+  it("restores interrupted requests as cancelled so they can be retried", () => {
+    const storage = new MemoryStorage();
+    const conversation = createConversation();
+    conversation.messages.push({
+      id: "assistant-pending",
+      role: "assistant",
+      content: "",
+      createdAt: conversation.createdAt,
+      status: "sending",
+    });
+    persistState({ conversations: [conversation], activeConversationId: conversation.id, hydrated: true }, storage);
+    expect(restoreState(storage).conversations[0].messages[0].status).toBe("cancelled");
+  });
 });
