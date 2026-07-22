@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://polygate.local/contracts/automation-intent.schema.json",
+  "title": "PolyGate Automation Intent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["employee", "department", "scenario", "urgency", "prompt", "preferences"],
+  "properties": {
+    "employee": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "department": {
+      "type": "string",
+      "enum": ["engineering", "support", "finance", "marketing"]
+    },
+    "scenario": {
+      "type": "string",
+      "enum": ["production_incident", "customer_escalation", "finance_summary", "marketing_batch"]
+    },
+    "urgency": {
+      "type": "string",
+      "enum": ["critical", "high", "normal", "low"]
+    },
+    "prompt": { "type": "string", "minLength": 1, "maxLength": 20000 },
+    "preferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quality", "privacy", "max_cost_usd", "latency_target_ms"],
+      "properties": {
+        "quality": { "type": "string", "enum": ["balanced", "high", "cheap"] },
+        "privacy": { "type": "string", "enum": ["standard", "high"] },
+        "max_cost_usd": { "type": "number", "minimum": 0, "maximum": 10 },
+        "latency_target_ms": { "type": "integer", "minimum": 1, "maximum": 120000 }
+      }
+    }
+  }
+}

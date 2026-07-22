@@ -1,0 +1,27 @@
+.markdown-body { color: var(--ink); font-size: .96rem; line-height: 1.72; overflow-wrap: anywhere; }
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 { margin: 1.4em 0 .55em; font-family: var(--serif); line-height: 1.25; }
+.markdown-body h1 { font-size: 1.75rem; }
+.markdown-body h2 { font-size: 1.42rem; }
+.markdown-body h3 { font-size: 1.18rem; }
+.markdown-body p, .markdown-body ul, .markdown-body ol, .markdown-body blockquote { margin: .7em 0; }
+.markdown-body ul, .markdown-body ol { padding-left: 1.5rem; }
+.markdown-body li + li { margin-top: .25em; }
+.markdown-body blockquote { padding: .2em 0 .2em 1em; border-left: 3px solid #d7a28d; color: #6c625a; }
+.markdown-body a { color: #a94a2c; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.markdown-body table { display: block; width: 100%; margin: 1em 0; border-spacing: 0; border-collapse: collapse; overflow-x: auto; }
+.markdown-body th, .markdown-body td { min-width: 110px; padding: 8px 11px; border: 1px solid var(--line); text-align: left; }
+.markdown-body th { background: var(--surface-muted); font-size: .8rem; }
+.markdown-body tr:nth-child(even) td { background: rgb(241 238 232 / 46%); }
+.markdown-body :not(pre) > code { padding: .15em .35em; border: 1px solid #e1dcd4; border-radius: 5px; color: #a5442a; background: #f3efea; font: .86em ui-monospace, SFMono-Regular, Menlo, monospace; }
+.markdown-body pre { margin: 1em 0; border-radius: 10px; background: #292b27; overflow: hidden; }
+.markdown-body pre > .code-block { display: block; }
+.code-toolbar { min-height: 36px; display: flex; align-items: center; justify-content: space-between; padding: 6px 10px 5px 13px; border-bottom: 1px solid #3d4039; color: #aeb1a9; font: .67rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+.code-toolbar button { display: flex; align-items: center; gap: 5px; padding: 4px 6px; border: 0; border-radius: 5px; color: #c8cbc3; background: transparent; cursor: pointer; font-size: .68rem; }
+.code-toolbar button:hover { color: #fff; background: #3d4039; }
+.code-toolbar svg { width: 13px; height: 13px; }
+.markdown-body pre code { display: block; padding: 14px 16px 16px; color: #f2efe8; background: transparent; overflow-x: auto; font: .82rem/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+.markdown-body hr { margin: 1.5em 0; border: 0; border-top: 1px solid var(--line); }
+.markdown-body input[type="checkbox"] { accent-color: var(--accent); }
+.blocked-image { display: inline-block; padding: 3px 6px; border-radius: 4px; color: var(--ink-muted); background: var(--surface-muted); font-size: .75rem; }

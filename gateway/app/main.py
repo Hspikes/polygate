@@ -33,8 +33,22 @@ from app.metrics import (
 logging.basicConfig(level=logging.INFO, format='{"ts":"%(asctime)s","lvl":"%(levelname)s","msg":%(message)s}')
 log = logging.getLogger("polygate")
 
-app = FastAPI(title="PolyGate Gateway", version="0.1.0-p0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app = FastAPI(title="PolyGate Gateway", version="0.2.0")
+CORS_ALLOW_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "CORS_ALLOW_ORIGINS",
+        "http://localhost:8080,http://127.0.0.1:8080",
+    ).split(",")
+    if origin.strip()
+]
+if CORS_ALLOW_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ALLOW_ORIGINS,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+    )
 
 PROVIDERS = load_providers()
 BREAKER = CircuitBreakerRegistry()
@@ -127,11 +141,18 @@ def chat_completions(req: GatewayRequest, request: Request):
             )
 
     # 1. cache lookup —— key 里带上 forced provider 的身份（cache_scope），
-    #    以及 quality/max_cost_usd（自动路由时这两个约束会影响实际选中的 provider），
+    #    以及 quality/max_cost_usd/latency_target_ms（自动路由时这些约束会影响 provider），
     #    避免"强制指定 mock-b"被"mock-a 的历史缓存"张冠李戴，
     #    也避免"改约束但 messages 没变"时被缓存直接短路、观察不到路由结果变化
     cache_scope = forced["name"] if forced else "auto"
-    key = cache_key(messages, c.privacy, cache_scope, c.quality, c.max_cost_usd)
+    key = cache_key(
+        messages,
+        c.privacy,
+        cache_scope,
+        c.quality,
+        c.max_cost_usd,
+        c.latency_target_ms,
+    )
     cached = CACHE.get(key)
     if cached:
         record_cache("hit")
@@ -199,7 +220,7 @@ def chat_completions(req: GatewayRequest, request: Request):
         estimated_cost_usd=cost,
     )
 
-    # 5. store in cache for next identical request —— key 用同一个 cache_scope/quality/max_cost_usd，保证查/存一致
+    # 5. store in cache for next identical request —— 查找和写入复用同一个完整约束 key
     CACHE.set(key, {"answer": result.content, "tokens": card.tokens.model_dump()})
     request.state.metric_outcome = "success"
     log.info(f'{{"request_id":"{request_id}","event":"served","provider":"{chosen["name"]}","cost":{cost},"latency_ms":{latency_ms}}}')

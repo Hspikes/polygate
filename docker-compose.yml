@@ -29,6 +29,36 @@ services:
     volumes:
       - ./contracts/providers.yaml:/app/providers.yaml:ro
 
+  automation:
+    build:
+      context: .
+      dockerfile: automation/Dockerfile
+    depends_on: [gateway, redis]
+    environment:
+      GATEWAY_URL: http://gateway:8000
+      AUTOMATION_REDIS_URL: redis://redis:6379/1
+    ports: ["8020:8020"]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8020/health', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+  web:
+    build: ./web
+    depends_on: [gateway]
+    ports: ["8080:8080"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
   prometheus:
     image: prom/prometheus:v3.13.1
     depends_on: [gateway]
