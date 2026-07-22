@@ -73,5 +73,5 @@ kind: Service
 metadata: { name: gateway }
 spec:
   selector: { app: gateway }
-  ports: [{ port: 80, targetPort: 8000 }]
-  type: NodePort   # P0: NodePort like the tutorial. Remember the EKS node security-group step!
+  ports: [{ name: http, port: 8000, targetPort: http }]
+  type: ClusterIP

@@ -7,10 +7,10 @@
 ## 30 秒跑起来（本地全套）
 ```bash
 cp .env.example .env          # 可留空；填了 REAL_A_API_KEY 才启用真实 Provider
-docker compose up --build     # 起 redis + mock-a + mock-b + gateway
-cd web && python -m http.server 8080   # 另开终端，打开 http://localhost:8080
+docker compose up --build     # 包含 Web、Gateway、Redis、Mock 和监控
 ```
-在页面里提交问题 → 看答案 + 决策卡片；再提交一次相同问题 → 看到缓存命中、成本 $0。
+打开 <http://localhost:8080>，连续发送多轮消息即可查看 Markdown 回答与每轮决策卡；
+刷新后会恢复普通本地会话。运行 `./scripts/web-smoke-test.sh` 可检查 Web、同源 API 和多轮链路。
 
 本地 Compose 还会启动完整的监控链路：
 

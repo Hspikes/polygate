@@ -33,6 +33,18 @@ require_text \
 require_text \
   "$ROOT_DIR/scripts/deploy-kubernetes-application.sh" \
   "PINNED_MOCK_IMAGE=\"$REGISTRY/polygate-mock:v1\""
+require_text \
+  "$ROOT_DIR/scripts/deploy-kubernetes-application.sh" \
+  "PINNED_WEB_IMAGE=\"$REGISTRY/polygate-web:v1\""
+require_text \
+  "$ROOT_DIR/scripts/build-kubernetes-images.sh" \
+  '"$ROOT_DIR/web"'
+require_text \
+  "$ROOT_DIR/deploy/gateway.yaml" \
+  "type: ClusterIP"
+require_text \
+  "$ROOT_DIR/deploy/web.yaml" \
+  "type: NodePort"
 
 require_text \
   "$ROOT_DIR/scripts/kubernetes-monitoring-preflight.sh" \
@@ -43,6 +55,9 @@ require_text \
 require_text \
   "$ROOT_DIR/scripts/kubernetes-monitoring-preflight.sh" \
   "$REGISTRY/polygate-mock:v1"
+require_text \
+  "$ROOT_DIR/scripts/kubernetes-monitoring-preflight.sh" \
+  "$REGISTRY/polygate-web:v1"
 
 require_text \
   "$ROOT_DIR/deploy/monitoring/README.md" \
