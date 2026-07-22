@@ -1,0 +1,14 @@
+{
+  "answer": "## Demo response\n\nPolyGate can render **Markdown**, keep each routing decision, and continue a multi-turn conversation.\n\n| Signal | Value |\n|---|---:|\n| Provider | mock-a |\n| Cache | miss |\n\n```ts\nconst route = \"thoughtful\";\n```",
+  "polygate": {
+    "chosen_provider": "mock-a",
+    "reason": "满足延迟、预算与隐私约束后选择综合得分最高的 Provider。",
+    "cache_hit": false,
+    "cost_estimate_usd": 0.00042,
+    "latency_ms": 312,
+    "tokens": { "input": 340, "output": 128 },
+    "retries": 0,
+    "failover_from": null,
+    "request_id": "req_fixture"
+  }
+}

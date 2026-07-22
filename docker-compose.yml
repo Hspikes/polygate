@@ -29,6 +29,17 @@ services:
     volumes:
       - ./contracts/providers.yaml:/app/providers.yaml:ro
 
+  web:
+    build: ./web
+    depends_on: [gateway]
+    ports: ["8080:8080"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
   prometheus:
     image: prom/prometheus:v3.13.1
     depends_on: [gateway]

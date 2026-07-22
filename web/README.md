@@ -1,33 +1,48 @@
-# web/  —— 成员 D（前端、测试与叙事）
+# PolyGate Web
 
-## 你的验收物（来自项目书）
-> 五分钟演示每一步都有清楚画面与备用录屏。
+Vite + React + TypeScript 多轮聊天客户端。浏览器维护会话和完整消息历史，Gateway
+保持无状态；所有环境统一通过同源 `/api` 访问 Gateway。
 
-## 零后端起步（第 1 天就能做）
-在 `web/` 目录启动本地静态服务器并打开页面，点「Demo response」，
-它会读 `fixtures/decision-card.example.json` 渲染答案和路由决策卡片。
-你不用等 A 的网关跑起来。
+## 本地开发
 
 ```bash
-cd web && python -m http.server 8080
-# 打开 http://localhost:8080
+cd web
+npm ci
+npm run dev
 ```
 
-## 接真网关（A 就绪后）
-本地起个静态服务器避免 CORS/file:// 问题：
+打开 <http://localhost:8080>。Vite 会把 `/api/*` 代理到
+`http://localhost:8000/*`。如果 Gateway 尚未启动，可点击“演示回答”加载本地 fixture。
+
+常用验证：
+
 ```bash
-cd web && python -m http.server 8080
-# 打开 http://localhost:8080 ，确保网关在 http://localhost:8000
+npm test
+npm run lint
+npm run build
+npm run e2e
 ```
-如需改网关地址：浏览器控制台执行 `localStorage.setItem('pg_gateway','http://...')`
 
-## 你负责的东西
-- `index.html`               用户工作台 UI + 决策卡片渲染
-- 演示控制台                 调 Mock 的 `/admin/config` 做故障/延迟注入（契约 #3）
-- 负载生成器                 给 HPA 演示制造请求突发（可用 `hey`/`k6`，或一段 fetch 循环）
-- Dashboard 面板             展示 C 的 Grafana + 每个 Provider 的价格/延迟/健康（读网关 `/providers`）
-- 截图、录屏、答辩材料
+## Compose
 
-## P0 完成判据
-- UI 能提交请求、显示答案 + 决策卡片
-- 再次提交相同请求，卡片显示 cache HIT、cost $0
+从仓库根目录执行：
+
+```bash
+docker compose up --build
+```
+
+Web 入口为 <http://localhost:8080>。Nginx 提供静态文件，并把 `/api/*` 反向代理给
+Compose 内部的 `gateway:8000`。可运行 `./scripts/web-smoke-test.sh` 验证页面、代理和多轮请求。
+
+## 数据与隐私
+
+- 普通会话以带 `schemaVersion` 的结构保存在当前浏览器 `localStorage`；
+- 恢复前使用 Zod 校验，损坏数据会安全回退；
+- 高隐私会话自动使用“不保存”模式，刷新后消失；
+- 不保存 Gateway Key、Provider Key 或其他凭证；
+- Markdown 不启用原始 HTML，外部图片被禁用，链接协议受限。
+
+## 生产镜像
+
+`Dockerfile` 使用 Node 构建静态资源，再交给非特权 Nginx 镜像运行。运行时只监听
+8080，提供 `/healthz`、SPA fallback、安全响应头和非流式 `/api` 代理。
