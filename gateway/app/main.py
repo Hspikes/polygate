@@ -20,6 +20,8 @@ from app.router import select_provider
 from app.adapters import call_provider
 from app.cache import Cache, cache_key
 from app.cost import estimate_cost
+from app.circuit_breaker import CircuitBreakerRegistry
+from app.retry import call_provider_with_resilience, ProviderUnavailableError
 from app.metrics import (
     record_cache,
     record_provider,
@@ -35,10 +37,20 @@ app = FastAPI(title="PolyGate Gateway", version="0.1.0-p0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 PROVIDERS = load_providers()
+BREAKER = CircuitBreakerRegistry()
 CACHE = Cache()
 # P0: static health map; B replaces this with live probes in P1.
 HEALTH: dict[str, str] = {}
 
+import asyncio
+from app.health_checker import health_check_loop
+
+@app.on_event("startup")
+async def startup_event():
+    # real-a（DeepSeek）没有专门的体检接口，不主动探测它，
+    # 它的健康状态完全依赖"业务请求失败"来判断（被动方式）
+    probeable_providers = [p for p in PROVIDERS if p.get("kind") != "real"]
+    asyncio.create_task(health_check_loop(probeable_providers, BREAKER))
 
 @app.middleware("http")
 async def record_chat_request(request: Request, call_next):
@@ -88,7 +100,7 @@ def providers():
             "price_per_1k_input": p.get("price_per_1k_input"),
             "price_per_1k_output": p.get("price_per_1k_output"),
             "typical_latency_ms": p.get("typical_latency_ms"),
-            "health": HEALTH.get(p["name"], "healthy"),
+            "health": BREAKER.debug_snapshot().get(p["name"], "healthy"),
         }
         for p in PROVIDERS
     ]
@@ -126,7 +138,7 @@ def chat_completions(req: GatewayRequest, request: Request):
         request.state.metric_outcome = "cache_hit"
         latency_ms = int((time.perf_counter() - t0) * 1000)
         card = DecisionCard(
-            chosen_provider="cache", reason="精确缓存命中，未调用任何 Provider，成本为 0",
+            chosen_provider="cache", reason="精确缓存命中，未调用任何 Provide,成本为 0",
             cache_hit=True, cost_estimate_usd=0.0, latency_ms=latency_ms,
             tokens=Tokens(**cached["tokens"]), request_id=request_id,
         )
@@ -139,22 +151,35 @@ def chat_completions(req: GatewayRequest, request: Request):
         if forced:
             chosen, reason = forced, f"用户强制指定 {forced['name']}"
         else:
-            chosen, reason, _ = select_provider(PROVIDERS, messages, c, HEALTH)
+            chosen, reason, _ = select_provider(PROVIDERS, messages, c, BREAKER.health_snapshot())
     except RuntimeError as e:
         request.state.metric_outcome = "routing_error"
         raise HTTPException(status_code=503, detail=str(e))
 
-    # 3. call provider via adapter
+    # 3. call provider via adapter (加固版：熔断 + 重试 + 失败自动切换)
     provider_t0 = time.perf_counter()
-    try:
-        result = call_provider(chosen, messages)
-    except Exception as e:
-        record_provider(chosen["name"], "error", time.perf_counter() - provider_t0)
-        request.state.metric_outcome = "provider_error"
-        # P0: surface the error. P1 (Member B) adds retry + circuit breaker + failover here.
-        log.info(f'{{"request_id":"{request_id}","event":"provider_error","provider":"{chosen["name"]}","err":"{e}"}}')
-        raise HTTPException(status_code=502, detail=f"provider {chosen['name']} failed: {e}")
-    record_provider(chosen["name"], "success", time.perf_counter() - provider_t0)
+    tried_names = []
+    while True:
+        tried_names.append(chosen["name"])
+        try:
+            result = call_provider_with_resilience(chosen, messages, BREAKER)
+            record_provider(chosen["name"], "success", time.perf_counter() - provider_t0)
+            break
+        except Exception as e:
+            record_provider(chosen["name"], "error", time.perf_counter() - provider_t0)
+            log.info(f'{{"request_id":"{request_id}","event":"provider_error","provider":"{chosen["name"]}","err":"{e}"}}')
+
+            remaining = [p for p in PROVIDERS if p["name"] not in tried_names]
+            if not remaining:
+                request.state.metric_outcome = "provider_error"
+                raise HTTPException(status_code=502, detail=f"所有 Provider 均不可用，最后失败: {e}")
+
+            try:
+                chosen, fallback_reason, _ = select_provider(remaining, messages, c, BREAKER.health_snapshot())
+                reason = f"{reason};{tried_names[-1]} 失败，自动切换到 {chosen['name']}({fallback_reason})"
+            except RuntimeError:
+                request.state.metric_outcome = "provider_error"
+                raise HTTPException(status_code=502, detail=f"所有 Provider 均不可用，最后失败: {e}")
 
     # 4. cost + decision card
     cost = estimate_cost(chosen, result.input_tokens, result.output_tokens)
@@ -164,6 +189,8 @@ def chat_completions(req: GatewayRequest, request: Request):
         cost_estimate_usd=cost, latency_ms=latency_ms,
         tokens=Tokens(input=result.input_tokens, output=result.output_tokens),
         request_id=request_id,
+        retries=getattr(result, "retries", 0),
+        failover_from=tried_names[0] if len(tried_names) > 1 else None,
     )
     record_usage(
         provider=chosen["name"],
