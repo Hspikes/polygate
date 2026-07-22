@@ -41,8 +41,12 @@ describe("chat flow", () => {
     const composer = await screen.findByRole("textbox", { name: "消息内容" });
     await user.type(composer, "first{enter}");
     expect(await screen.findByText("answer 1")).toBeInTheDocument();
+    expect(screen.getAllByText("PolyGate 回复")).toHaveLength(1);
+    expect(screen.getAllByText("路由策略")).toHaveLength(1);
     await user.type(composer, "second{enter}");
     expect(await screen.findByText("answer 2")).toBeInTheDocument();
+    expect(screen.getAllByText("PolyGate 回复")).toHaveLength(2);
+    expect(screen.getAllByText("路由策略")).toHaveLength(2);
 
     const chatCalls = vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/v1/chat/completions");
     const request = JSON.parse(String((chatCalls[1][1] as RequestInit).body)) as { messages: Array<{ role: string; content: string }> };
