@@ -13,9 +13,8 @@ export function Composer({ conversation, draft, onDraftChange }: {
   const [validation, setValidation] = useState("");
   const textarea = useRef<HTMLTextAreaElement>(null);
   const pending = conversation.messages.findLast(({ status }) => status === "sending");
-  const hasCompleteAssistant = conversation.messages.some(
-    ({ role, status }) => role === "assistant" && status === "complete",
-  );
+  const lastAssistant = conversation.messages.findLast(({ role }) => role === "assistant");
+  const canRegenerate = lastAssistant?.status === "complete";
 
   useEffect(() => {
     if (draft) textarea.current?.focus();
@@ -59,7 +58,7 @@ export function Composer({ conversation, draft, onDraftChange }: {
         <div className="composer-toolbar">
           <div className="composer-secondary">
             <button type="button" onClick={() => void loadFixture()}>演示回答</button>
-            {hasCompleteAssistant && !pending && <button type="button" onClick={() => void regenerateLast()}>重新生成</button>}
+            {canRegenerate && !pending && <button type="button" onClick={() => void regenerateLast()}>重新生成</button>}
             <span>{draft.length.toLocaleString()} / 8,000</span>
           </div>
           {pending ? (
