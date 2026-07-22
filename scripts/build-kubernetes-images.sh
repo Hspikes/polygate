@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build deployable Gateway and Mock Provider images from the current source.
+# Build deployable Web, Gateway and Mock Provider images from the current source.
 # Set PUSH_IMAGES=1 only after authenticating Docker to the target registry.
 
 set -euo pipefail
@@ -20,6 +20,7 @@ fi
 
 GATEWAY_IMAGE="$ECR_REGISTRY/polygate-gateway:$IMAGE_TAG"
 MOCK_IMAGE="$ECR_REGISTRY/polygate-mock:$IMAGE_TAG"
+WEB_IMAGE="$ECR_REGISTRY/polygate-web:$IMAGE_TAG"
 
 docker build \
   --platform "$TARGET_PLATFORM" \
@@ -31,10 +32,16 @@ docker build \
   --pull \
   --tag "$MOCK_IMAGE" \
   "$ROOT_DIR/providers/mock"
+docker build \
+  --platform "$TARGET_PLATFORM" \
+  --pull \
+  --tag "$WEB_IMAGE" \
+  "$ROOT_DIR/web"
 
 if [ "$PUSH_IMAGES" = "1" ]; then
   docker push "$GATEWAY_IMAGE"
   docker push "$MOCK_IMAGE"
+  docker push "$WEB_IMAGE"
 else
   echo "Images were built locally only. Set PUSH_IMAGES=1 to push them."
 fi
@@ -44,6 +51,7 @@ cat <<EOF
 Prepared images:
   $GATEWAY_IMAGE
   $MOCK_IMAGE
+  $WEB_IMAGE
 
 Use the same values for deployment:
   ECR_REGISTRY=$ECR_REGISTRY
