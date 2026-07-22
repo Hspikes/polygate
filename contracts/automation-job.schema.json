@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://polygate.local/contracts/automation-job.schema.json",
+  "title": "PolyGate Automation Job",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["job_id", "status", "priority", "queue_position", "created_at"],
+  "properties": {
+    "job_id": { "type": "string", "minLength": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["queued", "running", "completed", "failed"]
+    },
+    "priority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "initial_score", "reason"],
+      "properties": {
+        "class": { "type": "string", "enum": ["critical", "high", "normal", "low"] },
+        "initial_score": { "type": "integer" },
+        "reason": { "type": "string" }
+      }
+    },
+    "queue_position": { "type": "integer", "minimum": 0 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "started_at": { "type": "string", "format": "date-time" },
+    "completed_at": { "type": "string", "format": "date-time" },
+    "result": { "type": "object" },
+    "error": { "type": "string" }
+  }
+}
