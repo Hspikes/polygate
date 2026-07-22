@@ -37,10 +37,11 @@ def cache_key(
     scope: str = "auto",
     quality: str = "",
     max_cost_usd: float = 0.0,
+    latency_target_ms: int = 0,
 ) -> str:
     """
     scope: 区分"自动路由"和"强制指定某个 provider"的缓存空间。
-    quality / max_cost_usd: 自动路由时这两个约束会影响 select_provider 的结果，
+    quality / max_cost_usd / latency_target_ms: 自动路由时这些约束会影响 select_provider 的结果，
         必须纳入 key，否则改约束但 messages 没变时会被缓存短路。
     """
     payload = (
@@ -49,6 +50,7 @@ def cache_key(
         + "|" + scope
         + "|" + quality
         + "|" + str(max_cost_usd)
+        + "|" + str(latency_target_ms)
     )
     return "pg:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
