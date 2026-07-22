@@ -30,6 +30,8 @@
 
 ## 缓存 key 规范化规则（A 与 B 第一天一起定死，避免命中率飘）
 
-P0 采用：`sha256( normalize(messages) + "|" + privacy )`，其中 `normalize` =
+当前采用：`sha256(normalize(messages) + privacy + scope + quality + max_cost_usd + latency_target_ms)`，
+其中 `scope` 区分自动路由与强制 Provider，`normalize` =
 去掉每条 message 首尾空白 + 保持 role/顺序不变 + 不改大小写。
+所有可能改变路由结果的约束都必须进入缓存键，避免修改偏好后命中旧路由结果。
 > 语义缓存是 P3，P0 只做「精确 + 轻规范化」。如需扩展规范化规则，改 `gateway/app/cache.py::normalize`，并同步更新本节。
