@@ -4,7 +4,7 @@
 > 改动任何一个契约，必须在群里 @ 所有受影响的人并达成一致后才提交，
 > 否则你会悄悄弄坏别人正在写的代码。
 
-开工 2 小时会议要冻结的 5 份契约都在这里：
+开工会议冻结的共享契约都在这里：
 
 | # | 文件 | 定义什么 | 谁产出 | 谁消费 |
 |---|---|---|---|---|
@@ -14,6 +14,10 @@
 | 4 | `providers.yaml` | Provider 注册表（价格/隐私/endpoint） | A（B 校对价格） | A 路由、D 卡片 |
 | 5 | Adapter 统一响应格式（见下） | 各 Provider → 网关的归一化格式 | B | A |
 | 6 | `monitoring-overview.schema.json` + `.example.json` | 监控总览 JSON | Monitoring API | 监控前端 |
+| 7 | `automation-intent.schema.json` | 企业需求卡片 | D | Automation API、Pi 插件 |
+| 8 | `automation-preview.schema.json` | 模板编译、优先级和代码预览 | A | D、Pi 插件 |
+| 9 | `automation-job.schema.json` | 异步 Job 状态和结果 | A/B | D、C 监控 |
+| 10 | `automation-examples.json` | Automation 三份契约的联调示例 | A/B | C/D、测试脚本 |
 
 ## 契约 #5：Adapter 统一响应格式
 

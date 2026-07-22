@@ -1,0 +1,64 @@
+{
+  "intent": {
+    "employee": "Alice",
+    "department": "engineering",
+    "scenario": "production_incident",
+    "urgency": "critical",
+    "prompt": "Analyse the production incident log.",
+    "preferences": {
+      "quality": "high",
+      "privacy": "high",
+      "max_cost_usd": 0.01,
+      "latency_target_ms": 1000
+    }
+  },
+  "preview": {
+    "preview_id": "preview_demo",
+    "expires_in_seconds": 600,
+    "normalized_intent": {
+      "employee": "Alice",
+      "department": "engineering",
+      "scenario": "production_incident",
+      "urgency": "critical",
+      "prompt": "Analyse the production incident log.",
+      "preferences": {
+        "quality": "high",
+        "privacy": "high",
+        "max_cost_usd": 0.01,
+        "latency_target_ms": 1000
+      }
+    },
+    "priority": {
+      "class": "critical",
+      "initial_score": 140,
+      "reason": "critical urgency (100) + production_incident scenario (40)"
+    },
+    "gateway_request": {
+      "model": "auto",
+      "messages": [{ "role": "user", "content": "Analyse the production incident log." }],
+      "polygate": {
+        "quality": "high",
+        "privacy": "high",
+        "max_cost_usd": 0.01,
+        "latency_target_ms": 1000
+      }
+    },
+    "snippets": {
+      "json": "{\"model\":\"auto\"}",
+      "curl": "curl -X POST $POLYGATE_URL/v1/chat/completions",
+      "python": "requests.post(url, json=payload)"
+    },
+    "policy_adjustments": []
+  },
+  "job": {
+    "job_id": "job_demo",
+    "status": "queued",
+    "priority": {
+      "class": "critical",
+      "initial_score": 140,
+      "reason": "critical urgency (100) + production_incident scenario (40)"
+    },
+    "queue_position": 1,
+    "created_at": "2026-07-22T00:00:00Z"
+  }
+}

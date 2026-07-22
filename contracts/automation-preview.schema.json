@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://polygate.local/contracts/automation-preview.schema.json",
+  "title": "PolyGate Automation Preview",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["preview_id", "expires_in_seconds", "normalized_intent", "priority", "gateway_request", "snippets", "policy_adjustments"],
+  "properties": {
+    "preview_id": { "type": "string", "minLength": 1 },
+    "expires_in_seconds": { "type": "integer", "minimum": 1 },
+    "normalized_intent": { "type": "object" },
+    "priority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "initial_score", "reason"],
+      "properties": {
+        "class": { "type": "string", "enum": ["critical", "high", "normal", "low"] },
+        "initial_score": { "type": "integer" },
+        "reason": { "type": "string" }
+      }
+    },
+    "gateway_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "messages", "polygate"],
+      "properties": {
+        "model": { "type": "string" },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["role", "content"],
+            "properties": {
+              "role": { "type": "string", "enum": ["system", "user", "assistant"] },
+              "content": { "type": "string" }
+            }
+          }
+        },
+        "polygate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["quality", "privacy", "max_cost_usd", "latency_target_ms"],
+          "properties": {
+            "quality": { "type": "string", "enum": ["balanced", "high", "cheap"] },
+            "privacy": { "type": "string", "enum": ["standard", "high"] },
+            "max_cost_usd": { "type": "number" },
+            "latency_target_ms": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "snippets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["json", "curl", "python"],
+      "properties": {
+        "json": { "type": "string" },
+        "curl": { "type": "string" },
+        "python": { "type": "string" }
+      }
+    },
+    "policy_adjustments": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}
