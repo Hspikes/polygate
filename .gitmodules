@@ -1,0 +1,3 @@
+[submodule ".pi/extensions/polygate-routing"]
+	path = .pi/extensions/polygate-routing
+	url = ../polygate-pi-extension.git

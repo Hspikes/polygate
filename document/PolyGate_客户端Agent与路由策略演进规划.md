@@ -4,6 +4,9 @@
 > 日期：2026-07-22
 > 适用基础：当前 `main` 上已经跑通的 P0 网关、Web、Redis、Mock Provider、Prometheus/Grafana 与 Kubernetes 部署
 
+> Web 多轮聊天的已确认技术选型、Markdown 安全策略和云端部署细节，见
+> [`PolyGate_Web多轮聊天改造与云端部署方案.md`](./PolyGate_Web多轮聊天改造与云端部署方案.md)。
+
 ## 1. 目标与核心判断
 
 PolyGate 当前已经能够完成单轮文本请求、规则路由、精确缓存、成本估算和决策卡展示。下一阶段不应只是继续增加若干路由评分字段，而应同时完成两次升级：
