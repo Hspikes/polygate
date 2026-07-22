@@ -46,4 +46,3 @@ metadata: { name: mock-b }
 spec:
   selector: { app: mock-b }
   ports: [{ port: 8080, targetPort: 8080 }]
-  type: NodePort

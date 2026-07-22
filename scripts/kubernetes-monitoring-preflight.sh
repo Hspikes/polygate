@@ -39,6 +39,7 @@ for manifest in \
   "$ROOT_DIR/deploy/redis.yaml" \
   "$ROOT_DIR/deploy/mock-providers.yaml" \
   "$ROOT_DIR/deploy/gateway.yaml" \
+  "$ROOT_DIR/deploy/web.yaml" \
   "$ROOT_DIR/deploy/hpa.yaml"; do
   docker run --rm --interactive "$KUBECONFORM_IMAGE" \
     -strict \
@@ -166,7 +167,10 @@ if grep -Fq \
   "$ROOT_DIR/deploy/gateway.yaml" \
   && grep -Fq \
     "356029564744.dkr.ecr.us-east-1.amazonaws.com/polygate-mock:v1" \
-    "$ROOT_DIR/deploy/mock-providers.yaml"; then
+    "$ROOT_DIR/deploy/mock-providers.yaml" \
+  && grep -Fq \
+    "356029564744.dkr.ecr.us-east-1.amazonaws.com/polygate-web:v1" \
+    "$ROOT_DIR/deploy/web.yaml"; then
   ok "Application manifests contain the current ECR image anchors"
 else
   echo "Current application image anchors are missing" >&2

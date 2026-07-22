@@ -59,16 +59,15 @@ kubectl get pods -A | grep -v Running
   如果发现它又出现在 Add-ons 列表里且在 `CrashLoopBackOff`，直接再移除一次，
   不用花时间修，跟当前架构（emptyDir）无关。
 
-## 5. 如果做到 Phase 3 之后（NodePort 对外暴露）
+## 5. Web NodePort 对外入口
 
 新 session 里 EC2 网络接口(ENI)的关联信息可能会变，之前手动挂的放行安全组
-（`MyEKSGroup` / All TCP / 0.0.0.0/0）要重新确认还在，必要时按教程第 20-26 页
-的步骤重新挂一次：EC2 → Instances (running) → 逐个节点 → Networking →
-Network Interfaces → Actions → Change security groups → 加回那个放行组。
+要重新确认安全组规则还在。只放行 Web 的 TCP `30080`，来源尽量限定为演示者 IP；
+不要再公开 Gateway 或 Mock Provider，也不要长期使用 `All TCP / 0.0.0.0/0`。
 
 不确定还通不通，直接测：
 ```bash
-curl -s http://<节点公网IP>:<NodePort端口>/health
+curl -s http://<节点公网IP>:30080/healthz
 ```
 
 ## 6. 一键自检（收尾）
@@ -80,11 +79,10 @@ kubectl port-forward service/mock-b 18082:8080
 保持上面的端口转发运行，在另一个终端执行：
 
 ```bash
-GATEWAY=http://<节点公网IP>:<gateway的NodePort> \
-MOCK_B_ADMIN=http://localhost:18082/admin \
-./scripts/smoke-test.sh
+WEB_BASE=http://<节点公网IP>:30080 ./scripts/web-smoke-test.sh
 ```
-全绿就说明整套环境刷新完毕，可以继续干活了。
+全绿就说明页面、Nginx `/api` 代理、Gateway 和 Provider 的多轮链路正常。
+如需独立验证故障注入，可另行 port-forward Gateway 后运行原有 `scripts/smoke-test.sh`。
 
 监控部署后再确认：
 
