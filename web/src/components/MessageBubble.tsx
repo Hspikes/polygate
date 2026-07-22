@@ -35,18 +35,27 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
         )}
         {message.status === "complete" && (
           <>
-            <MarkdownMessage content={message.content} />
-            <div className="message-actions">
-              <button
-                type="button"
-                onClick={() => {
-                  void navigator.clipboard.writeText(message.content).then(() => {
-                    setCopied(true);
-                    window.setTimeout(() => setCopied(false), 1400);
-                  });
-                }}
-              ><CopyIcon /> {copied ? "已复制" : "复制回答"}</button>
-            </div>
+            <section className="response-card" aria-label="PolyGate 回复卡片">
+              <header className="response-card-header">
+                <span className="response-card-title">
+                  <strong>PolyGate 回复</strong>
+                  <small>由智能路由选定模型生成</small>
+                </span>
+                <button
+                  className="response-copy"
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(message.content).then(() => {
+                      setCopied(true);
+                      window.setTimeout(() => setCopied(false), 1400);
+                    });
+                  }}
+                ><CopyIcon /> {copied ? "已复制" : "复制"}</button>
+              </header>
+              <div className="response-card-body">
+                <MarkdownMessage content={message.content} />
+              </div>
+            </section>
             {message.decisionCard && <DecisionCard card={message.decisionCard} settings={message.requestSettings} />}
           </>
         )}

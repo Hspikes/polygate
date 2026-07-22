@@ -3,16 +3,19 @@ import { RouteIcon } from "./icons";
 
 export function DecisionCard({ card, settings }: { card: DecisionCardData; settings?: RoutingSettings }) {
   return (
-    <details className="decision-card">
-      <summary>
-        <span className="decision-title"><RouteIcon /> Routing note</span>
+    <section className="decision-card" aria-label="路由策略卡片">
+      <header className="decision-header">
+        <span className="decision-title">
+          <RouteIcon />
+          <span><strong>路由策略</strong><small>本轮模型选择依据</small></span>
+        </span>
         <span className="decision-badges">
           <span className="provider-badge">{card.chosenProvider}</span>
           <span className={card.cacheHit ? "cache-hit" : "cache-miss"}>
             {card.cacheHit ? "Cache hit" : "Cache miss"}
           </span>
         </span>
-      </summary>
+      </header>
       <div className="decision-body">
         <dl className="decision-metrics">
           <div><dt>成本</dt><dd>${card.costEstimateUsd.toFixed(6)}</dd></div>
@@ -28,6 +31,6 @@ export function DecisionCard({ card, settings }: { card: DecisionCardData; setti
           <span>Retries {card.retries}</span>
         </div>
       </div>
-    </details>
+    </section>
   );
 }
