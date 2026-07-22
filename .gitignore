@@ -8,3 +8,9 @@ venv/
 kubeconfig
 计划.md
 evidence
+web/node_modules/
+web/dist/
+web/coverage/
+web/playwright-report/
+web/test-results/
+web/*.tsbuildinfo
