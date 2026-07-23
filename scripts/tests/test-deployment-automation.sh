@@ -17,6 +17,16 @@ require_text() {
   fi
 }
 
+reject_text() {
+  local file="$1"
+  local rejected="$2"
+
+  if grep -Fq -- "$rejected" "$file"; then
+    echo "Found obsolete deployment setting in $file: $rejected" >&2
+    exit 1
+  fi
+}
+
 require_text \
   "$ROOT_DIR/scripts/build-kubernetes-images.sh" \
   "ECR_REGISTRY=\"\${ECR_REGISTRY:-$REGISTRY}\""
@@ -119,9 +129,26 @@ require_text \
   'value: "http://gateway:8000"'
 require_text \
   "$ROOT_DIR/deploy/automation.yaml" \
-  'value: "redis://redis:6379/1"'
+  'value: "redis://redis:6379/0"'
+require_text \
+  "$ROOT_DIR/docker-compose.yml" \
+  'AUTOMATION_REDIS_URL: redis://redis:6379/0'
+require_text \
+  "$ROOT_DIR/docs/superpowers/specs/2026-07-23-c1-automation-kubernetes-design.md" \
+  'AUTOMATION_REDIS_URL=redis://redis:6379/0'
+require_text \
+  "$ROOT_DIR/docs/superpowers/plans/2026-07-23-c1-automation-kubernetes.md" \
+  'AUTOMATION_REDIS_URL=redis://redis:6379/0'
 require_text \
   "$ROOT_DIR/scripts/kubernetes-monitoring-preflight.sh" \
   '"$ROOT_DIR/deploy/automation.yaml"'
+
+for file in \
+  "$ROOT_DIR/deploy/automation.yaml" \
+  "$ROOT_DIR/docker-compose.yml" \
+  "$ROOT_DIR/docs/superpowers/specs/2026-07-23-c1-automation-kubernetes-design.md" \
+  "$ROOT_DIR/docs/superpowers/plans/2026-07-23-c1-automation-kubernetes.md"; do
+  reject_text "$file" 'redis://redis:6379/1'
+done
 
 echo "Deployment automation settings are aligned with the active EKS account."
