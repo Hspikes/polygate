@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import httpx
 import redis
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
 from automation.app.redis_store import RedisAutomationStore
 
@@ -41,18 +41,22 @@ log = logging.getLogger("polygate.automation.worker")
 
 REDIS_URL = os.environ.get("AUTOMATION_REDIS_URL", "redis://redis:6379/0")
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://gateway:8000")
-# opt-in：留空就和 Gateway 那边的 POLYGATE_API_KEYS 逻辑一致，裸调不带认证；
-# 部署时要开启 Gateway 那层校验的话，这里也要配上同一个 key。
-# 环境变量名暂定，需要和 D/C 一起最终确认（A 建议的方式）。
-GATEWAY_API_KEY = os.environ.get("GATEWAY_API_KEY", "")
 
 POLL_INTERVAL_SECONDS = float(os.environ.get("WORKER_POLL_INTERVAL_SECONDS", "1.0"))
 LEASE_SECONDS = int(os.environ.get("WORKER_LEASE_SECONDS", "60"))
 JOB_TIMEOUT_SECONDS = float(os.environ.get("WORKER_JOB_TIMEOUT_SECONDS", "30"))
 MAX_RETRIES = int(os.environ.get("WORKER_MAX_RETRIES", "3"))
 GRACEFUL_SHUTDOWN_SECONDS = float(os.environ.get("WORKER_SHUTDOWN_GRACE_SECONDS", "45"))
-CONCURRENCY = int(os.environ.get("WORKER_CONCURRENCY", "5"))
+# 单副本 + Redis claim 尚未完全原子化之前，先保持 concurrency=1（团队确认），
+# 等 claim_next_job 的并发安全性在多副本场景下也验证过之后，再考虑调大。
+CONCURRENCY = int(os.environ.get("WORKER_CONCURRENCY", "1"))
 REAP_INTERVAL_SECONDS = float(os.environ.get("WORKER_REAP_INTERVAL_SECONDS", "10"))
+# opt-in：留空就和 Gateway 那边的 POLYGATE_API_KEYS 逻辑一致，裸调不带认证；
+# 部署时要开启 Gateway 那层校验的话，这里也要配上其中一个合法 key。
+# 环境变量名经过反复讨论，最终确认为 POLYGATE_API_KEY（和 Gateway 的
+# POLYGATE_API_KEYS 命名对齐；中间曾一度改回 GATEWAY_API_KEY，
+# 团队最后再次确认还是用 POLYGATE_API_KEY，此为最终版本）。
+POLYGATE_API_KEY = os.environ.get("POLYGATE_API_KEY", "")
 
 _shutdown_requested = threading.Event()
 _last_heartbeat = time.time()
@@ -72,11 +76,33 @@ JOBS_RETRIED_TOTAL = Counter(
 JOB_DURATION_SECONDS = Histogram(
     "automation_worker_job_duration_seconds", "单次任务执行耗时（从 claim 到 完成/失败）"
 )
+QUEUE_DEPTH = Gauge(
+    "automation_worker_queue_depth", "当前排队中（还没被任何 Worker 领取）的任务数"
+)
+IN_FLIGHT = Gauge(
+    "automation_worker_in_flight", "当前正在被执行（持有租约）的任务数"
+)
+QUEUE_WAIT_SECONDS = Histogram(
+    "automation_worker_queue_wait_seconds", "任务从创建到被 Worker 领取，实际等待了多久"
+)
 
 
 def _handle_signal(signum, frame):
     log.info(f'{{"event":"shutdown_signal_received","signal":{signum}}}')
     _shutdown_requested.set()
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """判断这个错误值不值得重试。
+
+    认证失败（401/403）是"永久性"的——同一个 key 不管重试多少次，
+    结果都一样，重试只是白白浪费重试次数、拖慢最终失败判定的速度，
+    所以这类错误应该直接判失败，不占用 MAX_RETRIES 的额度。
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        if exc.response.status_code in (401, 403):
+            return False
+    return True
 
 
 def execute_job(store: RedisAutomationStore, job) -> None:
@@ -90,8 +116,9 @@ def execute_job(store: RedisAutomationStore, job) -> None:
     - 不需要改动公开的 JobRecord 结构，D 那边不用跟着改解析代码
 
     认证：Gateway 那边的 POLYGATE_API_KEYS 是 opt-in 的（部署时留空就不校验）。
-    这里同样做成 opt-in——GATEWAY_API_KEY 有值才带 Authorization 头，
+    这里同样做成 opt-in——POLYGATE_API_KEY 有值才带 Authorization 头，
     没配就跟以前一样裸调，两边行为自动对齐，不需要本地/演示环境额外配置。
+    注意：这个 key 只用来构造请求头，不会被写进 Job、Redis 或任何日志里。
     """
     global _last_heartbeat
     job_id = job.job_id
@@ -101,7 +128,7 @@ def execute_job(store: RedisAutomationStore, job) -> None:
         if payload is None:
             raise RuntimeError("execution payload missing or expired（任务对应的内部快照找不到了）")
 
-        headers = {"Authorization": f"Bearer {GATEWAY_API_KEY}"} if GATEWAY_API_KEY else {}
+        headers = {"Authorization": f"Bearer {POLYGATE_API_KEY}"} if POLYGATE_API_KEY else {}
         with httpx.Client(timeout=JOB_TIMEOUT_SECONDS) as client:
             resp = client.post(f"{GATEWAY_URL}/v1/chat/completions", json=payload, headers=headers)
             resp.raise_for_status()
@@ -111,14 +138,15 @@ def execute_job(store: RedisAutomationStore, job) -> None:
         log.info(f'{{"event":"job_completed","job_id":"{job_id}"}}')
     except Exception as exc:
         retries = _retry_counts.get(job_id, 0)
-        if retries < MAX_RETRIES:
+        if _is_retryable(exc) and retries < MAX_RETRIES:
             _retry_counts[job_id] = retries + 1
             JOBS_RETRIED_TOTAL.inc()
             log.warning(f'{{"event":"job_retry","job_id":"{job_id}","attempt":{retries + 1},"err":"{exc}"}}')
             store.requeue_job(job_id)
         else:
             JOBS_FAILED_TOTAL.inc()
-            log.error(f'{{"event":"job_failed","job_id":"{job_id}","err":"{exc}"}}')
+            reason = "auth_failure" if not _is_retryable(exc) else "retries_exhausted"
+            log.error(f'{{"event":"job_failed","job_id":"{job_id}","reason":"{reason}","err":"{exc}"}}')
             store.fail_job(job_id, str(exc))
     finally:
         JOB_DURATION_SECONDS.observe(time.perf_counter() - started)
@@ -140,6 +168,9 @@ def worker_loop(store: RedisAutomationStore) -> None:
                 if reaped:
                     log.warning(f'{{"event":"leases_reaped","job_ids":{reaped}}}')
                 last_reap = now
+                # 顺便上报队列深度和执行中任务数，不需要额外单独起一个定时任务
+                QUEUE_DEPTH.set(store.queue_depth())
+                IN_FLIGHT.set(store.in_flight_count())
 
             in_flight = [f for f in in_flight if not f.done()]
             if len(in_flight) >= CONCURRENCY:
@@ -151,6 +182,8 @@ def worker_loop(store: RedisAutomationStore) -> None:
                 time.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
+            if job.started_at is not None:
+                QUEUE_WAIT_SECONDS.observe((job.started_at - job.created_at).total_seconds())
             log.info(f'{{"event":"job_claimed","job_id":"{job.job_id}"}}')
             in_flight.append(pool.submit(execute_job, store, job))
 

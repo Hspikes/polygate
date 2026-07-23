@@ -94,6 +94,16 @@ def create_app(store: AutomationStore | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "automation"}
 
+    @app.get("/ready")
+    def ready() -> dict[str, str]:
+        redis_client = getattr(persistence, "r", None)
+        if redis_client is not None:
+            try:
+                redis_client.ping()
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail=f"redis unavailable: {exc}")
+        return {"status": "ready", "service": "automation"}
+
     @app.get("/v1/templates", response_model=list[TemplateDefinition])
     def list_templates() -> list[TemplateDefinition]:
         return list(TEMPLATES)
@@ -139,12 +149,16 @@ def create_app(store: AutomationStore | None = None) -> FastAPI:
 
 
 
-def _build_default_store():
+def _build_default_store() -> AutomationStore:
     redis_url = os.environ.get("AUTOMATION_REDIS_URL")
-    if redis_url:
-        client = redis.Redis.from_url(redis_url)
-        return RedisAutomationStore(client)
-    return InMemoryAutomationStore()
+    if not redis_url:
+        raise RuntimeError(
+            "AUTOMATION_REDIS_URL is not set. Refusing to silently fall back to "
+            "InMemoryAutomationStore in production/Compose. Unit tests should call "
+            "create_app(InMemoryAutomationStore()) explicitly instead."
+        )
+    client = redis.Redis.from_url(redis_url)
+    return RedisAutomationStore(client)
 
 
 app = create_app(_build_default_store())
