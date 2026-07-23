@@ -33,11 +33,71 @@ spec:
             periodSeconds: 5
             failureThreshold: 12
           readinessProbe:
-            httpGet: { path: /health, port: http }
+            httpGet: { path: /ready, port: http }
             periodSeconds: 5
             failureThreshold: 3
           livenessProbe:
             httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: automation-worker
+  labels: { app: automation-worker }
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector: { matchLabels: { app: automation-worker } }
+  template:
+    metadata:
+      labels: { app: automation-worker }
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: automation-worker
+          image: 356029564744.dkr.ecr.us-east-1.amazonaws.com/polygate-automation:v1
+          command: ["python", "-m", "automation.app.worker"]
+          ports: [{ name: metrics, containerPort: 9000 }]
+          env:
+            - { name: GATEWAY_URL, value: "http://gateway:8000" }
+            - { name: AUTOMATION_REDIS_URL, value: "redis://redis:6379/0" }
+            - { name: WORKER_CONCURRENCY, value: "1" }
+            - { name: WORKER_HEALTH_PORT, value: "9000" }
+            - name: POLYGATE_API_KEY
+              valueFrom:
+                secretKeyRef: { name: gateway-client-secrets, key: worker-api-key, optional: true }
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "300m", memory: "256Mi" }
+          startupProbe:
+            httpGet: { path: /health, port: metrics }
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            httpGet: { path: /health, port: metrics }
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: metrics }
             periodSeconds: 10
             failureThreshold: 3
           securityContext:

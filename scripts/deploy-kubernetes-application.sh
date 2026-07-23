@@ -101,7 +101,7 @@ kubectl rollout restart \
 
 deployments=(redis mock-a mock-b gateway web)
 if [ "$INCLUDE_AUTOMATION" = "1" ]; then
-  deployments+=(automation)
+  deployments+=(automation automation-worker)
 fi
 
 for deployment in "${deployments[@]}"; do
