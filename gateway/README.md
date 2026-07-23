@@ -38,6 +38,42 @@ curl http://localhost:8000/metrics
 ## 接入 B 的 Mock（第 3 天集成）
 去掉 `FAKE_ADAPTER=1`，用 `docker compose up` 起全套即可。
 
+## Pi Agent 可运行闭环
+
+Gateway v0.3 支持 Pi 使用的 OpenAI Chat Completions 子集：content blocks、
+`developer/tool` 消息、`tools/tool_choice`、增量 tool call、SSE usage 和
+`data: [DONE]`。工具仍由 Pi 在本地执行，Gateway 不获得工作区权限。
+
+本地启动 Mock、Gateway 后执行：
+
+```bash
+git submodule update --init --recursive
+docker compose up --build redis mock-a mock-b gateway
+
+PI_BIN="$(command -v pi)" \
+POLYGATE_BASE_URL=http://127.0.0.1:8000/v1 \
+POLYGATE_API_KEY=local-development \
+./scripts/pi-gateway-smoke-test.sh
+```
+
+测试会完成两次模型调用：第一次从 Mock 流式收到 `read` tool call，Pi
+读取扩展中的固定 fixture，第二次把 tool result 发回 Gateway 并收到
+`mock ok`。测试不调用真实模型，也不会修改工作区文件。
+
+设置 `POLYGATE_API_KEYS` 后，`/v1/models` 和 `/v1/chat/completions` 要求
+Bearer Key；变量为空时保留原有本地 Web 开发兼容性：
+
+```bash
+POLYGATE_API_KEYS=local-development docker compose up --build gateway
+```
+
+所有 `stream=true`、tools、tool history 和 content-block 请求默认绕过
+P0 精确缓存。流式请求只允许在首个下游 SSE event 之前重试或切换
+Provider，输出开始后发生错误会终止流，不拼接其他 Provider 的输出。
+
+远程 Pi 通过 Web/Nginx 公网入口使用 `https://<host>/v1`；该位置关闭
+响应/请求缓冲并保留 Authorization。生产环境必须配置非默认客户端 Key。
+
 ## 你负责的文件
 - `app/main.py`     入口、缓存查、组装决策卡片、request_id（**已种下，别删**）
 - `app/router.py`   ⭐ 路由核心，P0 的规则都在这，扩展策略只改这里

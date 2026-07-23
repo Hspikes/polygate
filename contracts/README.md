@@ -8,7 +8,7 @@
 
 | # | 文件 | 定义什么 | 谁产出 | 谁消费 |
 |---|---|---|---|---|
-| 1 | `gateway-request.schema.json` | 网关对外的请求格式（OpenAI 兼容 + polygate 约束） | A | D、压测器 |
+| 1 | `gateway-request.schema.json` | Agent-capable Chat Completions v2（OpenAI 字段 + polygate 约束） | A | Web、Pi、压测器 |
 | 2 | `decision-card.schema.json` + `.example.json` | 决策卡片 JSON | A | D |
 | 3 | （见 `providers/mock/README.md` 的 `/admin/config`） | Mock 故障注入接口 | B | D |
 | 4 | `providers.yaml` | Provider 注册表（价格/隐私/endpoint） | A（B 校对价格） | A 路由、D 卡片 |
