@@ -233,17 +233,15 @@ curl http://localhost:9000/health
 
 ## C 复测 commit `b5ea83e` 后提出的 3 个非阻塞问题（已处理）
 
-1. **只设 `AUTOMATION_TEST_REDIS_URL` 跑完整 unittest 时，`main.py` 会在
-   模块导入阶段因缺少 `AUTOMATION_REDIS_URL` 报错，导致既有的
-   `test_api.py`/`test_contract_alignment.py` 无法被收集。**
-   这是 `main.py` fail-fast 改动的副作用——这些既有测试会导入
-   `automation.app.main`，触发模块级的 `_build_default_store()`。
-   没有去改动 `test_api.py`/`test_contract_alignment.py`（不是本次改动
-   范围，也不是我们负责的文件），采用的解法是**统一测试命令**：跑全部
-   测试套件时，`AUTOMATION_REDIS_URL` 和 `AUTOMATION_TEST_REDIS_URL`
-   两个变量都要设置（可以指向同一个测试用 DB），见上面"11. 本地测试
-   命令"和"13. 自动化测试"两节里更新过的命令。C 复测时验证过这个组合，
-   26/26 全部通过。
+1. **~~只设 `AUTOMATION_TEST_REDIS_URL` 跑完整 unittest 时，`main.py` 会在
+   模块导入阶段报错~~（已被 factory 方案彻底解决）。**
+   这个问题的根因是 `main.py` 在模块顶层就构造了生产 `app`，导致既有测试
+   一 import 就触发 fail-fast。现在已由团队改成 **factory 模式**（commit
+   `df2152c`）：`main.py` 提供 `get_app()` 工厂函数，生产 app 只在真正启动
+   服务时才构造，裸 import 不再触发 Redis 检查。所以**跑测试不再需要设置
+   `AUTOMATION_REDIS_URL`**，既有的 `test_api.py`/`test_contract_alignment.py`
+   能正常 collect/run。fail-fast 保护仍然保留（挪进了工厂函数，只在真正
+   启动时触发）。
 2. **文档引用了不存在的 `scripts/automation-peak-test.sh`。**
    这个脚本之前生成过，但没有真正提交进仓库——这次一并加进
    `scripts/` 目录并提交，让文档里的引用变成真实存在的文件。
@@ -277,10 +275,15 @@ AUTOMATION_TEST_REDIS_URL=redis://127.0.0.1:6379/15 \
 ```
 
 **跑 Automation 全部测试套件**（包括 `test_api.py`、
-`test_contract_alignment.py` 这些既有测试）：由于这些既有测试会导入
-`automation.app.main`，而 `main.py` 现在要求启动时必须配置好
-`AUTOMATION_REDIS_URL`（不然会 fail-fast 报错，见"待办"一节的说明），
-**两个环境变量都要设置**才能让全部测试一起跑通：
+`test_contract_alignment.py` 这些既有测试）：得益于 factory 模式，既有测试
+裸 import 不会再崩溃，**跑全套只需要设置 `AUTOMATION_TEST_REDIS_URL`**
+（给需要 Redis 的那几个测试用；契约测试还需要能读到 `contracts/` 目录，
+在容器里跑时记得挂载项目根目录）：
+
+```bash
+AUTOMATION_TEST_REDIS_URL=redis://127.0.0.1:6379/15 \
+  python -m pytest automation/tests/ -v
+```
 
 ```bash
 AUTOMATION_REDIS_URL=redis://127.0.0.1:6379/15 \
