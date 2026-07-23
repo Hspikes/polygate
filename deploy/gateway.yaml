@@ -15,11 +15,21 @@ data:
         kind: real
         endpoint: https://api.deepseek.com/v1/chat/completions
         api_key_env: REAL_A_API_KEY
-        model: deepseek-chat
-        price_per_1k_input: 0.0005
-        price_per_1k_output: 0.0015
+        model: deepseek-v4-flash
+        price_per_1k_input: 0.00014
+        price_per_1k_output: 0.00028
         privacy: external
         typical_latency_ms: 1500
+        context_window: 1000000
+        max_output_tokens: 8192
+        capabilities:
+          streaming: true
+          tools: true
+          parallel_tool_calls: true
+          vision: false
+          content_blocks: false
+          developer_role: false
+          store: false
       - name: mock-a
         kind: mock
         endpoint: http://mock-a:8080/v1/chat/completions
@@ -29,6 +39,16 @@ data:
         price_per_1k_output: 0.0002
         privacy: internal
         typical_latency_ms: 300
+        context_window: 64000
+        max_output_tokens: 8192
+        capabilities:
+          streaming: true
+          tools: true
+          parallel_tool_calls: true
+          vision: false
+          content_blocks: true
+          developer_role: true
+          store: true
       - name: mock-b
         kind: mock
         endpoint: http://mock-b:8080/v1/chat/completions
@@ -38,6 +58,16 @@ data:
         price_per_1k_output: 0.00008
         privacy: internal
         typical_latency_ms: 900
+        context_window: 64000
+        max_output_tokens: 8192
+        capabilities:
+          streaming: true
+          tools: true
+          parallel_tool_calls: true
+          vision: false
+          content_blocks: true
+          developer_role: true
+          store: true
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -57,6 +87,8 @@ spec:
             - { name: PROVIDERS_FILE, value: "/config/providers.yaml" }
             - name: REAL_A_API_KEY
               valueFrom: { secretKeyRef: { name: provider-secrets, key: real-a-key, optional: true } }
+            - name: POLYGATE_API_KEYS
+              valueFrom: { secretKeyRef: { name: gateway-client-secrets, key: api-keys, optional: true } }
           # HPA needs requests set to compute utilization %:
           resources:
             requests: { cpu: "100m", memory: "128Mi" }

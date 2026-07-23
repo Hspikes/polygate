@@ -8,7 +8,7 @@
 
 | # | 文件 | 定义什么 | 谁产出 | 谁消费 |
 |---|---|---|---|---|
-| 1 | `gateway-request.schema.json` | 网关对外的请求格式（OpenAI 兼容 + polygate 约束） | A | D、压测器 |
+| 1 | `gateway-request.schema.json` | Agent-capable Chat Completions v2（OpenAI 字段 + polygate 约束） | A | Web、Pi、压测器 |
 | 2 | `decision-card.schema.json` + `.example.json` | 决策卡片 JSON | A | D |
 | 3 | （见 `providers/mock/README.md` 的 `/admin/config`） | Mock 故障注入接口 | B | D |
 | 4 | `providers.yaml` | Provider 注册表（价格/隐私/endpoint） | A（B 校对价格） | A 路由、D 卡片 |
@@ -38,4 +38,6 @@
 其中 `scope` 区分自动路由与强制 Provider，`normalize` =
 去掉每条 message 首尾空白 + 保持 role/顺序不变 + 不改大小写。
 所有可能改变路由结果的约束都必须进入缓存键，避免修改偏好后命中旧路由结果。
+该 P0 键只用于纯 `role/content` 文本请求；tools、流式请求、消息元数据、
+`session_id` 和显式生成参数一律绕过缓存，避免未进入上述键的语义发生碰撞。
 > 语义缓存是 P3，P0 只做「精确 + 轻规范化」。如需扩展规范化规则，改 `gateway/app/cache.py::normalize`，并同步更新本节。
