@@ -17,7 +17,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from prometheus_client import CONTENT_TYPE_LATEST
 from starlette.concurrency import run_in_threadpool
 
-from app.adapters import call_provider, shutdown_async_client, startup_async_client
+from app.adapters import (
+    ProviderProtocolError,
+    call_provider,
+    shutdown_async_client,
+    startup_async_client,
+)
 from app.auth import require_client_api_key
 from app.cache import Cache, cache_key
 from app.circuit_breaker import CircuitBreakerRegistry
@@ -89,10 +94,14 @@ async def shutdown_event() -> None:
 
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(_request: Request, exc: RequestValidationError):
-    details = [
-        {key: value for key, value in error.items() if key != "input"}
-        for error in exc.errors()
-    ]
+    details = []
+    for error in exc.errors():
+        detail = {key: value for key, value in error.items() if key != "input"}
+        if "ctx" in detail:
+            detail["ctx"] = {
+                key: str(value) for key, value in detail["ctx"].items()
+            }
+        details.append(detail)
     return JSONResponse(
         status_code=422,
         content={
@@ -270,7 +279,11 @@ async def chat_completions(
     if forced:
         chosen, reason = forced, f"用户强制指定 {forced['name']}"
     else:
-        chosen, reason = _select(PROVIDERS, messages, req, required_capabilities)
+        try:
+            chosen, reason = _select(PROVIDERS, messages, req, required_capabilities)
+        except HTTPException:
+            request.state.metric_outcome = "routing_error"
+            raise
 
     if req.stream:
         return await _stream_response(
@@ -308,7 +321,7 @@ async def chat_completions(
         failover_from=tried_names[0] if len(tried_names) > 1 else None,
     )
     record_usage(chosen["name"], result.input_tokens, result.output_tokens, cost)
-    if key is not None and result.content:
+    if key is not None and result.content and len(tried_names) == 1:
         CACHE.set(key, {"answer": result.content, "tokens": card.tokens.model_dump()})
     request.state.metric_outcome = "success"
     log.info(
@@ -430,6 +443,7 @@ async def _stream_response(
 
     request.state.defer_metrics_to_stream = True
     observation = _StreamObservation()
+    include_usage = (req.stream_options or {}).get("include_usage") is True
 
     async def downstream() -> AsyncIterator[bytes]:
         outcome = "partial_error"
@@ -441,7 +455,8 @@ async def _stream_response(
                     outcome = "cancelled"
                     break
                 observation.consume(event)
-                yield event
+                if include_usage or not _is_usage_only_event(event):
+                    yield event
             else:
                 if observation.saw_done and observation.finish_reason is not None:
                     outcome = "success"
@@ -450,7 +465,6 @@ async def _stream_response(
             outcome = "cancelled"
             raise
         except Exception as exc:
-            BREAKER.record_failure(chosen["name"])
             log.info(
                 '{"request_id":"%s","event":"stream_error","provider":"%s","error_type":"%s"}',
                 request_id,
@@ -458,7 +472,14 @@ async def _stream_response(
                 type(exc).__name__,
             )
         finally:
-            await opened.aclose()
+            with contextlib.suppress(Exception):
+                await opened.aclose()
+            if outcome == "success":
+                BREAKER.record_success(chosen["name"])
+            elif outcome == "partial_error":
+                BREAKER.record_failure(chosen["name"])
+            else:
+                BREAKER.record_cancelled(chosen["name"])
             duration = time.perf_counter() - provider_started
             record_provider(chosen["name"], provider_outcome, duration)
             if outcome == "success":
@@ -506,23 +527,61 @@ class _StreamObservation:
         self.saw_done = False
 
     def consume(self, event: bytes) -> None:
-        for raw_line in event.decode("utf-8", errors="replace").splitlines():
-            if not raw_line.startswith("data:"):
-                continue
-            data = raw_line[5:].strip()
+        for data in _sse_data_values(event):
             if data == "[DONE]":
                 self.saw_done = True
                 continue
             try:
                 chunk = json.loads(data)
-            except json.JSONDecodeError:
-                continue
+            except json.JSONDecodeError as exc:
+                raise ProviderProtocolError("provider returned malformed SSE data") from exc
+            if not isinstance(chunk, dict) or chunk.get("error") is not None:
+                raise ProviderProtocolError("provider returned an invalid SSE chunk")
             usage = chunk.get("usage") or {}
             self.input_tokens = int(usage.get("prompt_tokens", self.input_tokens))
             self.output_tokens = int(usage.get("completion_tokens", self.output_tokens))
             for choice in chunk.get("choices") or []:
                 if choice.get("finish_reason") is not None:
                     self.finish_reason = str(choice["finish_reason"])
+
+
+def _is_usage_only_event(event: bytes) -> bool:
+    """Identify the optional usage chunk so it can be hidden when unrequested."""
+    chunks: list[dict[str, Any]] = []
+    for data in _sse_data_values(event):
+        if not data or data == "[DONE]":
+            return False
+        try:
+            chunk = json.loads(data)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(chunk, dict):
+            return False
+        chunks.append(chunk)
+    return bool(chunks) and all(
+        not chunk.get("choices") and chunk.get("usage") is not None
+        for chunk in chunks
+    )
+
+
+def _sse_data_values(event: bytes) -> list[str]:
+    """Parse data fields from one or more complete SSE events."""
+    values: list[str] = []
+    data_lines: list[str] = []
+    for raw_line in event.decode("utf-8", errors="replace").splitlines():
+        if raw_line == "":
+            if data_lines:
+                values.append("\n".join(data_lines).strip())
+                data_lines = []
+            continue
+        if raw_line.startswith("data:"):
+            value = raw_line[5:]
+            if value.startswith(" "):
+                value = value[1:]
+            data_lines.append(value)
+    if data_lines:
+        values.append("\n".join(data_lines).strip())
+    return values
 
 
 def _cached_envelope(answer: str, card: DecisionCard) -> dict:

@@ -76,12 +76,25 @@ def _test_file(messages: list[dict]) -> str:
     return match.group(1) if match else DEFAULT_TOOL_PATH
 
 
-def _tool_name(tools: list[dict]) -> str | None:
+def _tool_name(tools: list[dict], tool_choice: Any = None) -> str | None:
+    if tool_choice == "none":
+        return None
+
+    available: list[str] = []
     for tool in tools:
         function = tool.get("function") if isinstance(tool, dict) else None
         if isinstance(function, dict) and isinstance(function.get("name"), str):
-            return function["name"]
-    return None
+            available.append(function["name"])
+
+    if isinstance(tool_choice, dict):
+        function = tool_choice.get("function")
+        selected = function.get("name") if isinstance(function, dict) else None
+        if not isinstance(selected, str) or selected not in available:
+            raise HTTPException(status_code=400, detail="tool_choice names an unavailable function")
+        return selected
+    if tool_choice == "required" and not available:
+        raise HTTPException(status_code=400, detail="tool_choice=required needs at least one tool")
+    return available[0] if available else None
 
 
 def _tool_arguments(name: str, messages: list[dict]) -> str:
@@ -116,13 +129,14 @@ def _tool_stream(
     model: str,
     messages: list[dict],
     tool_name: str,
+    include_usage: bool,
 ) -> list[bytes]:
     base = _base_chunk(completion_id, model)
     arguments = _tool_arguments(tool_name, messages)
     split_at = max(1, len(arguments) // 2)
     call_id = f"call_{NAME}_{random.randint(1000, 9999)}"
     usage = _usage(messages, arguments)
-    return [
+    events = [
         _data_event({
             **base,
             "choices": [{
@@ -159,9 +173,11 @@ def _tool_stream(
             **base,
             "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
         }),
-        _data_event({**base, "choices": [], "usage": usage}),
-        b"data: [DONE]\n\n",
     ]
+    if include_usage:
+        events.append(_data_event({**base, "choices": [], "usage": usage}))
+    events.append(b"data: [DONE]\n\n")
+    return events
 
 
 def _text_stream(
@@ -169,10 +185,11 @@ def _text_stream(
     model: str,
     messages: list[dict],
     content: str,
+    include_usage: bool,
 ) -> list[bytes]:
     base = _base_chunk(completion_id, model)
     midpoint = max(1, len(content) // 2)
-    return [
+    events = [
         _data_event({
             **base,
             "choices": [{"index": 0, "delta": {"role": "assistant", "content": content[:midpoint]}, "finish_reason": None}],
@@ -185,9 +202,13 @@ def _text_stream(
             **base,
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
         }),
-        _data_event({**base, "choices": [], "usage": _usage(messages, content)}),
-        b"data: [DONE]\n\n",
     ]
+    if include_usage:
+        events.append(
+            _data_event({**base, "choices": [], "usage": _usage(messages, content)})
+        )
+    events.append(b"data: [DONE]\n\n")
+    return events
 
 
 @app.post("/v1/chat/completions")
@@ -202,12 +223,19 @@ async def chat_completions(body: dict):
     model = body.get("model", f"mock-{NAME}")
     completion_id = f"chatcmpl-{NAME}-{random.randint(1000, 9999)}"
     has_tool_result = any(message.get("role") == "tool" for message in messages)
-    tool_name = _tool_name(tools)
+    tool_name = _tool_name(tools, body.get("tool_choice"))
+    include_usage = bool(
+        (body.get("stream_options") or {}).get("include_usage")
+    )
 
     if tool_name and not has_tool_result:
         if body.get("stream"):
             return StreamingResponse(
-                _events(_tool_stream(completion_id, model, messages, tool_name)),
+                _events(
+                    _tool_stream(
+                        completion_id, model, messages, tool_name, include_usage
+                    )
+                ),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache"},
             )
@@ -240,7 +268,11 @@ async def chat_completions(body: dict):
     content = "mock ok" if has_tool_result else f"Hello World from {NAME}! You said: {user_text[:120]}"
     if body.get("stream"):
         return StreamingResponse(
-            _events(_text_stream(completion_id, model, messages, content)),
+            _events(
+                _text_stream(
+                    completion_id, model, messages, content, include_usage
+                )
+            ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache"},
         )

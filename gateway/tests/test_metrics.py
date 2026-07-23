@@ -11,9 +11,9 @@ os.environ["PROVIDERS_FILE"] = str(PROJECT_ROOT / "contracts" / "providers.yaml"
 os.environ["FAKE_ADAPTER"] = "1"
 os.environ["REDIS_URL"] = "redis://127.0.0.1:1/0"
 
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient  # noqa: E402
 
-from app.main import CACHE, app
+from app.main import CACHE, app  # noqa: E402
 
 
 client = TestClient(app)
@@ -259,6 +259,40 @@ class GatewayMetricsTest(unittest.TestCase):
             )
         )
         self.assertEqual(cache_after, cache_before)
+
+    def test_capability_routing_failure_uses_routing_error_outcome(self):
+        routing_error_before = metric_value(
+            "polygate_requests_total",
+            {"outcome": "routing_error"},
+        )
+        legacy_provider = {
+            "name": "legacy-text",
+            "kind": "mock",
+            "privacy": "internal",
+            "price_per_1k_input": 0.0,
+            "price_per_1k_output": 0.0,
+            "typical_latency_ms": 1,
+            "capabilities": {},
+        }
+
+        with patch("app.main.PROVIDERS", [legacy_provider]):
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "auto",
+                    "messages": [{"role": "user", "content": "stream this"}],
+                    "stream": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            metric_value(
+                "polygate_requests_total",
+                {"outcome": "routing_error"},
+            ),
+            routing_error_before + 1,
+        )
 
 
 if __name__ == "__main__":

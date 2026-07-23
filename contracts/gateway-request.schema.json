@@ -5,7 +5,7 @@
   "description": "Agent-capable OpenAI Chat Completions request with PolyGate routing constraints.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["model", "messages"],
+  "required": ["messages"],
   "properties": {
     "model": { "type": "string", "minLength": 1 },
     "messages": {
@@ -14,41 +14,71 @@
       "items": { "$ref": "#/definitions/message" }
     },
     "tools": {
-      "type": "array",
+      "type": ["array", "null"],
       "items": { "type": "object" }
     },
     "tool_choice": {
       "oneOf": [
         { "type": "string", "enum": ["none", "auto", "required"] },
-        { "type": "object" }
+        { "type": "object" },
+        { "type": "null" }
       ]
     },
-    "parallel_tool_calls": { "type": "boolean" },
-    "temperature": { "type": "number" },
-    "top_p": { "type": "number" },
-    "max_tokens": { "type": "integer", "minimum": 1 },
-    "max_completion_tokens": { "type": "integer", "minimum": 1 },
+    "parallel_tool_calls": { "type": ["boolean", "null"] },
+    "temperature": { "type": ["number", "null"], "minimum": 0, "maximum": 2 },
+    "top_p": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+    "max_tokens": { "type": ["integer", "null"], "minimum": 1 },
+    "max_completion_tokens": { "type": ["integer", "null"], "minimum": 1 },
     "stop": {
       "oneOf": [
         { "type": "string" },
-        { "type": "array", "items": { "type": "string" } }
+        { "type": "array", "items": { "type": "string" } },
+        { "type": "null" }
       ]
     },
-    "response_format": { "type": "object" },
+    "response_format": { "type": ["object", "null"] },
     "stream": { "type": "boolean", "default": false },
-    "stream_options": { "type": "object" },
-    "seed": { "type": "integer" },
-    "frequency_penalty": { "type": "number" },
-    "presence_penalty": { "type": "number" },
-    "logit_bias": { "type": "object", "additionalProperties": { "type": "number" } },
-    "logprobs": { "type": "boolean" },
-    "top_logprobs": { "type": "integer" },
-    "user": { "type": "string" },
-    "service_tier": { "type": "string" },
-    "reasoning_effort": { "type": "string" },
-    "store": { "type": "boolean" },
+    "stream_options": {
+      "type": ["object", "null"],
+      "properties": {
+        "include_usage": { "type": ["boolean", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "seed": { "type": ["integer", "null"] },
+    "frequency_penalty": { "type": ["number", "null"], "minimum": -2, "maximum": 2 },
+    "presence_penalty": { "type": ["number", "null"], "minimum": -2, "maximum": 2 },
+    "logit_bias": { "type": ["object", "null"], "additionalProperties": { "type": "number" } },
+    "logprobs": { "type": ["boolean", "null"] },
+    "top_logprobs": { "type": ["integer", "null"], "minimum": 0, "maximum": 20 },
+    "user": { "type": ["string", "null"] },
+    "service_tier": { "type": ["string", "null"] },
+    "reasoning_effort": { "type": ["string", "null"] },
+    "store": { "type": ["boolean", "null"] },
     "polygate": { "$ref": "#/definitions/polygate" }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": ["stream_options"],
+        "properties": { "stream_options": { "type": "object" } }
+      },
+      "then": {
+        "required": ["stream"],
+        "properties": { "stream": { "const": true } }
+      }
+    },
+    {
+      "if": {
+        "required": ["top_logprobs"],
+        "properties": { "top_logprobs": { "type": "integer" } }
+      },
+      "then": {
+        "required": ["logprobs"],
+        "properties": { "logprobs": { "const": true } }
+      }
+    }
+  ],
   "definitions": {
     "contentBlock": {
       "type": "object",
@@ -71,11 +101,49 @@
             { "type": "array", "items": { "$ref": "#/definitions/contentBlock" } }
           ]
         },
-        "name": { "type": "string" },
-        "tool_calls": { "type": "array", "items": { "type": "object" } },
-        "tool_call_id": { "type": "string" }
+        "name": { "type": ["string", "null"] },
+        "tool_calls": { "type": ["array", "null"], "items": { "type": "object" } },
+        "tool_call_id": { "type": ["string", "null"] }
       },
-      "additionalProperties": true
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "role": { "enum": ["system", "developer", "user"] } }
+          },
+          "then": {
+            "required": ["content"],
+            "properties": { "content": { "not": { "type": "null" } } }
+          }
+        },
+        {
+          "if": { "properties": { "role": { "const": "tool" } } },
+          "then": {
+            "required": ["content", "tool_call_id"],
+            "properties": {
+              "content": { "not": { "type": "null" } },
+              "tool_call_id": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "role": { "const": "assistant" } } },
+          "then": {
+            "anyOf": [
+              {
+                "required": ["content"],
+                "properties": { "content": { "not": { "type": "null" } } }
+              },
+              {
+                "required": ["tool_calls"],
+                "properties": {
+                  "tool_calls": { "type": "array", "minItems": 1 }
+                }
+              }
+            ]
+          }
+        }
+      ]
     },
     "polygate": {
       "type": "object",
@@ -86,7 +154,7 @@
         "privacy": { "type": "string", "enum": ["standard", "high"], "default": "standard" },
         "quality": { "type": "string", "enum": ["balanced", "high", "cheap"], "default": "balanced" },
         "cache_control": { "type": "string", "enum": ["auto", "no-store"], "default": "auto" },
-        "session_id": { "type": "string", "minLength": 1, "maxLength": 256 }
+        "session_id": { "type": ["string", "null"], "minLength": 1, "maxLength": 256 }
       }
     }
   }

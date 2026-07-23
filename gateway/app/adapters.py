@@ -134,7 +134,10 @@ def build_provider_payload(provider: dict, payload: dict[str, Any]) -> dict[str,
         body.pop("store", None)
     if body.get("stream"):
         stream_options = dict(body.get("stream_options") or {})
-        stream_options.setdefault("include_usage", True)
+        # Always request usage for gateway accounting. The downstream layer
+        # removes the usage-only event again when the client did not ask for
+        # it, preserving the public Chat Completions contract.
+        stream_options["include_usage"] = True
         body["stream_options"] = stream_options
     return body
 
@@ -197,10 +200,20 @@ def call_provider(
         timeout=timeout_s,
     )
     response.raise_for_status()
-    data = response.json()
-    if not isinstance(data.get("choices"), list):
+    try:
+        data = response.json()
+    except (TypeError, ValueError) as exc:
+        raise ProviderProtocolError(
+            f"provider {provider['name']} returned malformed JSON"
+        ) from exc
+    if not isinstance(data, dict) or not isinstance(data.get("choices"), list):
         raise ProviderProtocolError(f"provider {provider['name']} returned no choices")
-    return AdapterResult(data, int((time.perf_counter() - started) * 1000))
+    try:
+        return AdapterResult(data, int((time.perf_counter() - started) * 1000))
+    except (TypeError, ValueError) as exc:
+        raise ProviderProtocolError(
+            f"provider {provider['name']} returned invalid usage data"
+        ) from exc
 
 
 async def _iter_sse_events(response: httpx.Response) -> AsyncIterator[bytes]:
@@ -214,6 +227,50 @@ async def _iter_sse_events(response: httpx.Response) -> AsyncIterator[bytes]:
         lines.append(line)
     if lines:
         yield ("\n".join(lines) + "\n\n").encode("utf-8")
+
+
+def _event_data(event: bytes) -> str | None:
+    """Return one SSE event's joined data field, ignoring comments/metadata."""
+    data_lines: list[str] = []
+    for raw_line in event.decode("utf-8", errors="replace").splitlines():
+        if not raw_line.startswith("data:"):
+            continue
+        value = raw_line[5:]
+        if value.startswith(" "):
+            value = value[1:]
+        data_lines.append(value)
+    return "\n".join(data_lines) if data_lines else None
+
+
+def _is_completion_event(provider: dict, event: bytes) -> bool:
+    """Validate the first semantic upstream event before committing HTTP 200."""
+    data = _event_data(event)
+    if data is None:
+        return False
+    if data.strip() == "[DONE]":
+        raise ProviderProtocolError(
+            f"provider {provider['name']} ended before returning a completion chunk"
+        )
+    try:
+        payload = json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise ProviderProtocolError(
+            f"provider {provider['name']} returned malformed SSE data"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ProviderProtocolError(
+            f"provider {provider['name']} returned a non-object SSE payload"
+        )
+    if payload.get("error") is not None:
+        raise ProviderProtocolError(
+            f"provider {provider['name']} returned an SSE error before its first chunk"
+        )
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ProviderProtocolError(
+            f"provider {provider['name']} returned no choices in its first SSE payload"
+        )
+    return True
 
 
 async def _fake_stream(provider: dict, payload: dict[str, Any]) -> OpenedProviderStream:
@@ -232,6 +289,10 @@ async def _fake_stream(provider: dict, payload: dict[str, Any]) -> OpenedProvide
         _data_event({
             **chunk_base,
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }),
+        _data_event({
+            **chunk_base,
+            "choices": [],
             "usage": result.response["usage"],
         }),
         b"data: [DONE]\n\n",
@@ -274,30 +335,50 @@ async def open_provider_stream(
     started = time.perf_counter()
     response = await client.send(request, stream=True)
     if response.is_error:
-        await response.aread()
         try:
+            await response.aread()
             response.raise_for_status()
         finally:
             await response.aclose()
 
     content_type = response.headers.get("content-type", "")
     if "text/event-stream" not in content_type.lower():
-        await response.aread()
-        await response.aclose()
+        try:
+            await response.aread()
+        finally:
+            await response.aclose()
         raise ProviderProtocolError(
             f"provider {provider['name']} returned {content_type or 'no content type'} for stream=true"
         )
 
     events = _iter_sse_events(response)
+    prefetched: list[bytes] = []
+    prefetched_size = 0
     try:
-        first_event = await anext(events)
+        for _ in range(32):
+            event = await anext(events)
+            prefetched.append(event)
+            prefetched_size += len(event)
+            if prefetched_size > 64 * 1024:
+                raise ProviderProtocolError(
+                    f"provider {provider['name']} sent too much SSE prelude data"
+                )
+            if _is_completion_event(provider, event):
+                break
+        else:
+            raise ProviderProtocolError(
+                f"provider {provider['name']} sent too many SSE prelude events"
+            )
     except StopAsyncIteration as exc:
         await response.aclose()
         raise ProviderProtocolError(f"provider {provider['name']} returned an empty SSE stream") from exc
+    except Exception:
+        await response.aclose()
+        raise
 
     return OpenedProviderStream(
         response=response,
-        first_event=first_event,
+        first_event=b"".join(prefetched),
         remaining_events=events,
         latency_to_first_event_ms=int((time.perf_counter() - started) * 1000),
     )

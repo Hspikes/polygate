@@ -6,9 +6,8 @@
     每次等待时间翻倍。这样如果 provider 只是短暂抖动，很快就能恢复；
     但如果它是真的挂了，我们也不会在短时间内疯狂骚扰它。
 
-只有"暂时性"错误才重试:网络超时、连接失败、5xx(服务器端错误,比如 500/502/503)。
-4xx(比如 401 密钥错误、400 参数错误）不重试——这类错误重试也没用，
-只会白白拖慢用户等待的时间。
+只有"暂时性"错误才重试:网络超时、连接失败、5xx，以及 408/409/429。
+其他 4xx 不重试；其中请求型 400/422 也不会污染 Provider 熔断状态。
 """
 import asyncio
 import time
@@ -18,6 +17,7 @@ import httpx
 from app.adapters import (
     AdapterResult,
     OpenedProviderStream,
+    ProviderPayloadError,
     call_provider,
     open_provider_stream,
 )
@@ -30,12 +30,35 @@ class ProviderUnavailableError(Exception):
 
 def _is_transient_error(exc: Exception) -> bool:
     """判断这个错误是不是"暂时性"的，值得重试。"""
-    if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError)):
+    if isinstance(exc, httpx.TransportError):
         return True
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
-        return status >= 500  # 5xx 是服务端问题，可能重试就好了；4xx 是请求本身有问题
+        return status >= 500 or status in {408, 409, 429}
     return False
+
+
+def _is_provider_failure(exc: Exception) -> bool:
+    """Exclude request/adapter incompatibilities from provider health."""
+    if isinstance(exc, ProviderPayloadError):
+        return False
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        # 400/422 are normally request-specific. Authentication, missing model,
+        # throttling and server errors indicate an unusable provider/config.
+        return status >= 500 or status in {401, 403, 404, 408, 409, 429}
+    return True
+
+
+def _record_terminal_failure(
+    breaker: CircuitBreakerRegistry,
+    provider_name: str,
+    exc: Exception,
+) -> None:
+    if _is_provider_failure(exc):
+        breaker.record_failure(provider_name)
+    else:
+        breaker.record_cancelled(provider_name)
 
 
 def call_provider_with_resilience(
@@ -70,7 +93,7 @@ def call_provider_with_resilience(
             last_exc = exc
             is_last_attempt = attempt == max_retries
             if not _is_transient_error(exc) or is_last_attempt:
-                breaker.record_failure(name)
+                _record_terminal_failure(breaker, name, exc)
                 raise
             delay = base_delay_s * (2 ** attempt) + random.uniform(0, base_delay_s)
             time.sleep(delay)
@@ -97,14 +120,16 @@ async def open_provider_stream_with_resilience(
     for attempt in range(max_retries + 1):
         try:
             opened = await open_provider_stream(provider, payload, timeout_s=timeout_s)
-            breaker.record_success(name)
+            # The first chunk only proves that the stream opened. Do not clear
+            # breaker history until the downstream consumer observes a clean
+            # finish_reason followed by data: [DONE].
             opened.retries = attempt
             return opened
         except Exception as exc:
             last_exc = exc
             is_last_attempt = attempt == max_retries
             if not _is_transient_error(exc) or is_last_attempt:
-                breaker.record_failure(name)
+                _record_terminal_failure(breaker, name, exc)
                 raise
             delay = base_delay_s * (2 ** attempt) + random.uniform(0, base_delay_s)
             await asyncio.sleep(delay)

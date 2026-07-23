@@ -98,6 +98,43 @@ class MockAgentStreamTests(unittest.TestCase):
         self.assertIn("stop", finish_reasons)
         self.assertTrue(second.text.rstrip().endswith("data: [DONE]"))
 
+    def test_tool_choice_none_returns_text_instead_of_a_tool_call(self):
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "mock",
+                "messages": [{"role": "user", "content": "answer directly"}],
+                "tools": [{
+                    "type": "function",
+                    "function": {"name": "read", "parameters": {"type": "object"}},
+                }],
+                "tool_choice": "none",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        choice = response.json()["choices"][0]
+        self.assertEqual(choice["finish_reason"], "stop")
+        self.assertNotIn("tool_calls", choice["message"])
+
+    def test_stream_usage_is_only_emitted_when_requested(self):
+        payload = {
+            "model": "mock",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": True,
+        }
+        without_usage = client.post("/v1/chat/completions", json=payload)
+        with_usage = client.post(
+            "/v1/chat/completions",
+            json={
+                **payload,
+                "stream_options": {"include_usage": True},
+            },
+        )
+
+        self.assertNotIn('"usage":', without_usage.text)
+        self.assertIn('"usage":', with_usage.text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -67,9 +67,12 @@ Bearer Key；变量为空时保留原有本地 Web 开发兼容性：
 POLYGATE_API_KEYS=local-development docker compose up --build gateway
 ```
 
-所有 `stream=true`、tools、tool history 和 content-block 请求默认绕过
-P0 精确缓存。流式请求只允许在首个下游 SSE event 之前重试或切换
-Provider，输出开始后发生错误会终止流，不拼接其他 Provider 的输出。
+所有 `stream=true`、tools、tool history、content-block、消息元数据、会话 ID
+和显式生成参数请求默认绕过 P0 精确缓存，避免不同语义的请求复用旧答案。
+流式请求只允许在首个下游 SSE event 之前重试或切换 Provider，输出开始后
+发生错误会终止流，不拼接其他 Provider 的输出。Gateway 会为内部计费请求
+usage，但只在客户端设置 `stream_options.include_usage=true` 时向下游透传
+usage-only chunk。
 
 远程 Pi 通过 Web/Nginx 公网入口使用 `https://<host>/v1`；该位置关闭
 响应/请求缓冲并保留 Authorization。生产环境必须配置非默认客户端 Key。

@@ -38,4 +38,6 @@
 其中 `scope` 区分自动路由与强制 Provider，`normalize` =
 去掉每条 message 首尾空白 + 保持 role/顺序不变 + 不改大小写。
 所有可能改变路由结果的约束都必须进入缓存键，避免修改偏好后命中旧路由结果。
+该 P0 键只用于纯 `role/content` 文本请求；tools、流式请求、消息元数据、
+`session_id` 和显式生成参数一律绕过缓存，避免未进入上述键的语义发生碰撞。
 > 语义缓存是 P3，P0 只做「精确 + 轻规范化」。如需扩展规范化规则，改 `gateway/app/cache.py::normalize`，并同步更新本节。
