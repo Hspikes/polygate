@@ -153,7 +153,7 @@ class GatewayMetricsTest(unittest.TestCase):
             {"outcome": "provider_error"},
         )
 
-        with patch("app.retry.call_provider", side_effect=RuntimeError("forced failure")):
+        with patch("app.main.call_provider", side_effect=RuntimeError("forced failure")):
             response = client.post(
                 "/v1/chat/completions",
                 json={
@@ -297,5 +297,6 @@ class GatewayMetricsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
