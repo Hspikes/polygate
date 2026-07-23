@@ -15,8 +15,8 @@ os.environ["PROVIDERS_FILE"] = str(PROJECT_ROOT / "contracts" / "providers.yaml"
 os.environ["FAKE_ADAPTER"] = "1"
 os.environ["REDIS_URL"] = "redis://127.0.0.1:6379/0"  # 真实可达的 Redis，跟 test_metrics.py 不同
 
-from fastapi.testclient import TestClient
-from app.main import CACHE, app
+from fastapi.testclient import TestClient  # noqa: E402
+from app.main import CACHE, app  # noqa: E402
 
 client = TestClient(app)
 
