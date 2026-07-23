@@ -71,7 +71,12 @@ class RedisAutomationStore:
             existing = self.get_job(existing_id) if existing_id else None
             if existing is not None:
                 return existing
-            job_id = "job_" + uuid.uuid4().hex  # 兜底：idempotency 记录还在但 job 数据丢了
+            # 兜底：idempotency 记录还在，但对应的 job 数据丢了（比如上一次入队
+            # 写到一半就崩溃了）。用新的 job_id 重新创建，并且把 idempotency
+            # 指针也覆盖过去（不用 NX，直接覆盖），这样下一次重复提交才会收敛到
+            # 这次新建的 job，而不是一直指向那个已经丢失的旧记录。
+            job_id = "job_" + uuid.uuid4().hex
+            self.r.set(idem_key, job_id, ex=IDEMPOTENCY_TTL_SECONDS)
 
         queue_position = self.r.scard(self._k("queue", "pending")) + 1
         record = JobRecord(
@@ -81,24 +86,27 @@ class RedisAutomationStore:
             queue_position=queue_position,
             created_at=datetime.now(UTC),
         )
-        self._save_job(record)
 
+        # 用 pipeline 把"写 job、写内部快照、入队、写索引"这几步打包成一次
+        # 原子操作（MULTI/EXEC），把"半途崩溃导致数据不一致"的窗口收窄到
+        # 只剩 SETNX 和这个 pipeline 之间那一小段（比之前四次独立网络请求安全
+        # 得多）。
+        pipe = self.r.pipeline()
+        pipe.set(self._k("job", record.job_id), record.model_dump_json())
         # 关键点：完整的 gateway_request（包含用户 prompt）只存在这个"内部专用"
         # 的 key 里，不放进公开的 JobRecord。GET /v1/jobs、GET /v1/jobs/{id}
         # 这些对外接口读的是 JobRecord，天然不会暴露这份内容；只有 Worker
         # 会主动读取这个 key。同时这份快照是入队时就写死的，不依赖会过期的
         # PreviewResponse，Worker 排多久队都不受影响。
-        self.r.set(
+        pipe.set(
             self._k("job-payload", record.job_id),
             preview.gateway_request.model_dump_json(),
             ex=EXECUTION_PAYLOAD_TTL_SECONDS,
         )
+        pipe.sadd(self._k("queue", "pending"), job_id)
+        pipe.zadd(self._k("jobs", "index"), {job_id: record.created_at.timestamp()})
+        pipe.execute()
 
-        # 待处理队列现在用 Set 而不是 List：因为要按 effective_priority
-        # （见 claim_next_job）挑选，不是单纯先进先出，所以顺序无所谓，
-        # 只需要能快速"取出全部待处理任务"。
-        self.r.sadd(self._k("queue", "pending"), job_id)
-        self.r.zadd(self._k("jobs", "index"), {job_id: record.created_at.timestamp()})
         return record
 
     def get_job(self, job_id: str) -> JobRecord | None:
@@ -201,7 +209,15 @@ class RedisAutomationStore:
             chosen = max(candidates, key=lambda c: (c[3], -c[4]))
 
         job_id, record, priority_class, _, _, _ = chosen
-        self.r.srem(self._k("queue", "pending"), job_id)
+
+        # 关键修复：检查 srem 的返回值，确认自己真的"抢到"了这个任务的
+        # 移除权，而不是假设一定成功。如果返回 0，说明这一瞬间被别的
+        # Worker/线程先一步拿走了，这一轮就不再继续处理它，直接放弃
+        # （下一轮 claim 会重新评估剩下的候选任务）。这是为了在未来
+        # replicas > 1 时也能保证同一个任务不会被两个 Worker 同时执行。
+        removed = self.r.srem(self._k("queue", "pending"), job_id)
+        if not removed:
+            return None
 
         if priority_class in self._CRITICAL_HIGH:
             self.r.incr(self._k("queue", "streak"))
@@ -262,3 +278,11 @@ class RedisAutomationStore:
         for job_id in job_ids:
             self.requeue_job(job_id)
         return job_ids
+
+    def queue_depth(self) -> int:
+        """当前排队中（queued，还没被任何 Worker 领取）的任务数，供 metrics 用。"""
+        return self.r.scard(self._k("queue", "pending"))
+
+    def in_flight_count(self) -> int:
+        """当前正在被某个 Worker 执行（持有租约）的任务数，供 metrics 用。"""
+        return self.r.zcard(self._k("queue", "leases"))
