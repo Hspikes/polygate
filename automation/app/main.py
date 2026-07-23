@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import uuid
-
+import redis
 from fastapi import FastAPI, Header, HTTPException, Query, status
 
 from automation.app.models import (
@@ -20,7 +21,7 @@ from automation.app.models import (
 )
 from automation.app.store import AutomationStore, InMemoryAutomationStore
 from automation.app.templates import TEMPLATE_BY_SCENARIO, TEMPLATES, URGENCY_SCORE
-
+from automation.app.redis_store import RedisAutomationStore
 
 PREVIEW_TTL_SECONDS = 600
 POLYGATE_URL_DEFAULT = "http://localhost:8000"
@@ -137,4 +138,13 @@ def create_app(store: AutomationStore | None = None) -> FastAPI:
     return app
 
 
-app = create_app()
+
+def _build_default_store():
+    redis_url = os.environ.get("AUTOMATION_REDIS_URL")
+    if redis_url:
+        client = redis.Redis.from_url(redis_url)
+        return RedisAutomationStore(client)
+    return InMemoryAutomationStore()
+
+
+app = create_app(_build_default_store())
