@@ -102,6 +102,13 @@ expressions = [
     if target.get("expr")
 ]
 required_metrics = {
+    "automation_worker_in_flight",
+    "automation_worker_job_duration_seconds_bucket",
+    "automation_worker_jobs_failed_total",
+    "automation_worker_jobs_processed_total",
+    "automation_worker_jobs_retried_total",
+    "automation_worker_queue_depth",
+    "automation_worker_queue_wait_seconds_bucket",
     "container_cpu_usage_seconds_total",
     "container_memory_working_set_bytes",
     "kube_deployment_status_replicas_available",

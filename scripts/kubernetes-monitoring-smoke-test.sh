@@ -7,6 +7,12 @@ PROMETHEUS="${PROMETHEUS:-http://localhost:9090}"
 GRAFANA="${GRAFANA:-http://localhost:3000}"
 GRAFANA_USER="${GRAFANA_USER:-admin}"
 GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-}"
+INCLUDE_AUTOMATION="${INCLUDE_AUTOMATION:-0}"
+
+if [ "$INCLUDE_AUTOMATION" != "0" ] && [ "$INCLUDE_AUTOMATION" != "1" ]; then
+  echo "INCLUDE_AUTOMATION must be 0 or 1." >&2
+  exit 1
+fi
 
 PASS=0
 FAIL=0
@@ -67,6 +73,21 @@ if positive_number "$GATEWAY_TARGETS" \
   ok "Every discovered Gateway Pod is UP ($GATEWAY_UP/$GATEWAY_TARGETS)"
 else
   bad "Gateway scrape targets are incomplete ($GATEWAY_UP/$GATEWAY_TARGETS)"
+fi
+
+if [ "$INCLUDE_AUTOMATION" = "1" ]; then
+  WORKER_UP="$(
+    query_value 'max(up{job="polygate-automation-worker"})' 2>/dev/null || echo 0
+  )"
+  WORKER_QUEUE_SERIES="$(
+    query_value 'count(automation_worker_queue_depth)' 2>/dev/null || echo 0
+  )"
+  if python3 -c "raise SystemExit(0 if float('$WORKER_UP') == 1 else 1)" \
+    && positive_number "$WORKER_QUEUE_SERIES"; then
+    ok "Automation Worker target and queue metrics are present"
+  else
+    bad "Automation Worker target or queue metrics are missing"
+  fi
 fi
 
 KSM_UP="$(
@@ -139,8 +160,9 @@ else
       "$GRAFANA/api/dashboards/uid/polygate-overview" \
       2>/dev/null || echo '{}'
   )"
-  if echo "$DASHBOARD" | python3 -c '
+  if echo "$DASHBOARD" | INCLUDE_AUTOMATION="$INCLUDE_AUTOMATION" python3 -c '
 import json
+import os
 import sys
 
 dashboard = json.load(sys.stdin).get("dashboard", {})
@@ -156,8 +178,22 @@ required = {
     "kube_deployment_status_replicas_available",
     "kube_horizontalpodautoscaler_status_desired_replicas",
 }
+minimum_panels = 20
+if os.environ.get("INCLUDE_AUTOMATION") == "1":
+    minimum_panels = 29
+    required.update(
+        {
+            "automation_worker_in_flight",
+            "automation_worker_job_duration_seconds_bucket",
+            "automation_worker_jobs_failed_total",
+            "automation_worker_jobs_processed_total",
+            "automation_worker_jobs_retried_total",
+            "automation_worker_queue_depth",
+            "automation_worker_queue_wait_seconds_bucket",
+        }
+    )
 valid = (
-    len(panels) >= 20
+    len(panels) >= minimum_panels
     and all(
         any(metric in expression for expression in expressions)
         for metric in required
@@ -165,7 +201,7 @@ valid = (
 )
 raise SystemExit(0 if valid else 1)
 '; then
-    ok "The protected Grafana dashboard contains Kubernetes resource panels"
+    ok "The protected Grafana dashboard contains required resource panels"
   else
     bad "The Grafana dashboard is missing or authentication failed"
   fi
