@@ -14,7 +14,8 @@
 - Keep Automation private as a ClusterIP service on port `8020`.
 - Keep Automation at one replica while Preview and Job state are process-local.
 - Default `INCLUDE_AUTOMATION` to `0`; accept only `0` or `1`.
-- Use `GATEWAY_URL=http://gateway:8000` and `AUTOMATION_REDIS_URL=redis://redis:6379/1`.
+- Use `GATEWAY_URL=http://gateway:8000` and `AUTOMATION_REDIS_URL=redis://redis:6379/0`.
+- Isolate Automation data in the shared Redis DB 0 with the `automation:` key prefix.
 - Build cloud images for `linux/amd64`.
 - Do not add Agent, Worker, HPA, Prometheus, Grafana, NodePort, LoadBalancer, or Secrets in C1.
 - Do not stage the unrelated untracked 2026-07-20 plan files.
@@ -44,7 +45,7 @@ require_text "$ROOT_DIR/deploy/automation.yaml" "type: ClusterIP"
 require_text "$ROOT_DIR/deploy/automation.yaml" "automountServiceAccountToken: false"
 require_text "$ROOT_DIR/deploy/automation.yaml" "runAsUser: 10001"
 require_text "$ROOT_DIR/deploy/automation.yaml" 'value: "http://gateway:8000"'
-require_text "$ROOT_DIR/deploy/automation.yaml" 'value: "redis://redis:6379/1"'
+require_text "$ROOT_DIR/deploy/automation.yaml" 'value: "redis://redis:6379/0"'
 require_text "$ROOT_DIR/scripts/kubernetes-monitoring-preflight.sh" \
   '"$ROOT_DIR/deploy/automation.yaml"'
 ```
@@ -86,7 +87,7 @@ spec:
           ports: [{ name: http, containerPort: 8020 }]
           env:
             - { name: GATEWAY_URL, value: "http://gateway:8000" }
-            - { name: AUTOMATION_REDIS_URL, value: "redis://redis:6379/1" }
+            - { name: AUTOMATION_REDIS_URL, value: "redis://redis:6379/0" }
           resources:
             requests: { cpu: "50m", memory: "64Mi" }
             limits: { cpu: "300m", memory: "256Mi" }
@@ -468,7 +469,8 @@ git push origin feat/tan
 ```text
 C1 的 Automation Kubernetes 骨架已完成：集群内地址固定为
 http://automation:8020，环境变量为 GATEWAY_URL=http://gateway:8000 和
-AUTOMATION_REDIS_URL=redis://redis:6379/1。当前仍为单副本，默认
+AUTOMATION_REDIS_URL=redis://redis:6379/0，并通过 automation: key prefix
+隔离数据。当前仍为单副本，默认
 INCLUDE_AUTOMATION=0，不会部署到 EKS。请 A/B 确认端口、/health、Redis
 状态迁移方案；Worker、Agent 和 /metrics 完成后按交接模板 @C，我再做 C2/C3 接线。
 ```
