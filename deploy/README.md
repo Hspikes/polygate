@@ -51,6 +51,64 @@ IMAGE_TAG="$C1_IMAGE_TAG" INCLUDE_AUTOMATION=1 \
 集群内地址固定为 `http://automation:8020`，Service 为 ClusterIP。当前单副本限制
 必须保持到 A/B 将状态迁移到 Redis 并完成并发测试之后。
 
+## C2 Automation Worker 接线
+
+Automation 已改用 Redis DB 0，并通过 `automation:` key prefix 隔离状态。
+Worker 与 Automation API 共用同一个镜像，但使用独立 Deployment 和启动命令：
+
+```text
+Automation API:  uvicorn automation.app.main:app --host 0.0.0.0 --port 8020
+Worker:          python -m automation.app.worker
+```
+
+当前为了保证队列领取的确定性，API 和 Worker 都固定为单副本，Worker 使用
+`strategy: Recreate` 和 `WORKER_CONCURRENCY=1`。Automation API 的 liveness
+继续使用 `/health`，readiness 改用真正检查 Redis 的 `/ready`。Worker 不创建
+Service；Kubernetes 探针和 Prometheus 直接访问 Pod 的 `9000` 端口。
+
+Gateway 认证仍为 opt-in。启用认证时，让 Gateway 接受的 key 与 Worker 使用的
+key 保持一致，并把两个值放进同一个 Secret：
+
+```bash
+read -s POLYGATE_WORKER_KEY
+kubectl create secret generic gateway-client-secrets \
+  --from-literal=api-keys="$POLYGATE_WORKER_KEY" \
+  --from-literal=worker-api-key="$POLYGATE_WORKER_KEY" \
+  --dry-run=client \
+  --output=yaml \
+  | kubectl apply --filename=-
+unset POLYGATE_WORKER_KEY
+```
+
+部署时仍显式开启 Automation：
+
+```bash
+IMAGE_TAG=<刚构建并推送的不可变标签> INCLUDE_AUTOMATION=1 \
+  ./scripts/deploy-kubernetes-application.sh
+./scripts/deploy-kubernetes-monitoring.sh
+```
+
+部署完成后，在两个终端分别保留私有端口转发：
+
+```bash
+kubectl port-forward service/automation 8020:8020
+kubectl port-forward deployment/automation-worker 9000:9000
+```
+
+然后运行端到端检查：
+
+```bash
+./scripts/kubernetes-automation-smoke-test.sh
+
+GRAFANA_PASSWORD=<当前管理员密码> INCLUDE_AUTOMATION=1 \
+  ./scripts/kubernetes-monitoring-smoke-test.sh
+```
+
+这个检查会验证 `/ready`、Worker 健康、Redis 幂等入队、Worker 调用 Gateway
+完成任务、七项 Worker Prometheus 指标、Prometheus Worker target，以及 Grafana
+Automation 面板。Automation API、Worker 和监控均保持集群内部访问，不增加
+NodePort 或 LoadBalancer。
+
 ## 部署顺序（第 4 天集成）
 
 使用和构建、推送时完全相同的标签：
