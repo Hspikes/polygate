@@ -82,11 +82,12 @@ Automation 保持 ClusterIP，不创建 NodePort、LoadBalancer 或公网安全�
 
 ```text
 GATEWAY_URL=http://gateway:8000
-AUTOMATION_REDIS_URL=redis://redis:6379/1
+AUTOMATION_REDIS_URL=redis://redis:6379/0
 ```
 
-环境变量只包含内部服务地址，不包含 Secret。后续如果 A/B 增加凭证，应使用
-`secretKeyRef`，不得把真实值提交到 YAML。
+Automation 与 Gateway 共用 Redis DB 0，由 Automation Store 的 `automation:`
+key prefix 隔离数据，不依赖 Redis 多 DB。环境变量只包含内部服务地址，不包含
+Secret。后续如果 A/B 增加凭证，应使用 `secretKeyRef`，不得把真实值提交到 YAML。
 
 ### 4.3 探针
 
