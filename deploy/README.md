@@ -57,7 +57,7 @@ Automation 已改用 Redis DB 0，并通过 `automation:` key prefix 隔离状�
 Worker 与 Automation API 共用同一个镜像，但使用独立 Deployment 和启动命令：
 
 ```text
-Automation API:  uvicorn automation.app.main:app --host 0.0.0.0 --port 8020
+Automation API:  uvicorn automation.app.main:get_app --factory --host 0.0.0.0 --port 8020
 Worker:          python -m automation.app.worker
 ```
 
