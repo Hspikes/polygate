@@ -50,6 +50,27 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+
+  automation-worker:
+    build:
+      context: .
+      dockerfile: automation/Dockerfile
+    command: ["python", "-m", "automation.app.worker"]
+    depends_on: [gateway, redis]
+    environment:
+      GATEWAY_URL: http://gateway:8000
+      AUTOMATION_REDIS_URL: redis://redis:6379/0
+      POLYGATE_API_KEY: ""
+    ports: ["9000:9000"]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=2)"
+      interval: 10s
+    restart: unless-stopped
+
   web:
     build: ./web
     depends_on: [gateway]

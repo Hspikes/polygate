@@ -156,15 +156,50 @@ queued  --[Worker claim_next_job()]-->  running  --[执行成功]--> completed
   - `automation_worker_queue_wait_seconds`（Histogram，新增）—— 任务从
     创建到被领取，实际排队等待了多久
 
-## 10. 本地测试命令
+## 10. docker-compose.yml 新增 automation-worker 服务
+
+之前一直是用 `docker run` 临时命令手动跑 Worker 来测试，`docker-compose.yml`
+里没有真正定义过它，所以文档里写的 `docker compose up` 实际上不会自动
+启动 Worker。现在补上，在 `docker-compose.yml` 里 `automation:` 那个服务
+定义下面，新增：
+
+```yaml
+  automation-worker:
+    build:
+      context: .
+      dockerfile: automation/Dockerfile
+    command: ["python", "-m", "automation.app.worker"]
+    depends_on: [gateway, redis]
+    environment:
+      GATEWAY_URL: http://gateway:8000
+      AUTOMATION_REDIS_URL: redis://redis:6379/0
+      POLYGATE_API_KEY: ""
+    ports: ["9000:9000"]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=2)"
+      interval: 10s
+    restart: unless-stopped
+```
+
+（这只是本地 docker-compose 用的开发配置，跟 C 负责的 `deploy/` 下
+K8s manifest 是两回事，互不影响；`replicas`/`strategy: Recreate` 这些
+仍然由 C 在 K8s Deployment 里落实。）
+
+## 11. 本地测试命令
 
 ```bash
 # 1. 重新构建（requirements.txt 加了 redis 包）
 docker compose build automation --no-cache
 docker compose up -d
 
-# 2. 确认 automation API 正常
+# 2. 确认 automation API 和 Worker 都正常
 curl http://localhost:8020/health
+curl http://localhost:8020/ready
+curl http://localhost:9000/health
 
 # 3. 跑一次四任务高峰场景（见 scripts/automation-peak-test.sh）
 ./scripts/automation-peak-test.sh
@@ -174,7 +209,7 @@ curl http://localhost:8020/health
 然后轮询每个任务的状态，打印出从 `queued -> running -> completed/failed`
 的变化，方便本地肉眼确认 Worker 真的在处理排队的任务。
 
-## 11. 本次 follow-up 修复的问题（针对 commit 14afb30 之后的 review 反馈）
+## 12. 本次 follow-up 修复的问题（针对 commit 14afb30 之后的 review 反馈）
 
 1. **`enqueue()` 多步 Redis 写入不原子**：之前分四次独立请求写
    job/job-payload/队列/索引，中途崩溃可能导致数据不一致。现在用
@@ -193,10 +228,33 @@ curl http://localhost:8020/health
 5. **新增 `GET /ready`**：真正 ping Redis，连不上返回 503，配合 K8s
    readiness probe 使用；`GET /health` 保持只做存活检查（liveness），
    不检查 Redis，避免 Redis 抖动时把 Pod 误杀。
+6. **错误分类扩展**：`_is_retryable()` 从"只区分 401/403"扩展成完整规则：
+   400/401/403/422 不重试直接判失败，408/429/5xx 和网络层错误才重试。
 
-## 12. 自动化测试
+## C 复测 commit `b5ea83e` 后提出的 3 个非阻塞问题（已处理）
 
-新增 `automation/app/tests/test_redis_store_and_worker.py`，覆盖：
+1. **只设 `AUTOMATION_TEST_REDIS_URL` 跑完整 unittest 时，`main.py` 会在
+   模块导入阶段因缺少 `AUTOMATION_REDIS_URL` 报错，导致既有的
+   `test_api.py`/`test_contract_alignment.py` 无法被收集。**
+   这是 `main.py` fail-fast 改动的副作用——这些既有测试会导入
+   `automation.app.main`，触发模块级的 `_build_default_store()`。
+   没有去改动 `test_api.py`/`test_contract_alignment.py`（不是本次改动
+   范围，也不是我们负责的文件），采用的解法是**统一测试命令**：跑全部
+   测试套件时，`AUTOMATION_REDIS_URL` 和 `AUTOMATION_TEST_REDIS_URL`
+   两个变量都要设置（可以指向同一个测试用 DB），见上面"11. 本地测试
+   命令"和"13. 自动化测试"两节里更新过的命令。C 复测时验证过这个组合，
+   26/26 全部通过。
+2. **文档引用了不存在的 `scripts/automation-peak-test.sh`。**
+   这个脚本之前生成过，但没有真正提交进仓库——这次一并加进
+   `scripts/` 目录并提交，让文档里的引用变成真实存在的文件。
+3. **`docker-compose.yml` 没有定义 Automation Worker，`docker compose up`
+   不会启动它。**
+   已经在上面"10. docker-compose.yml 新增 automation-worker 服务"这一节
+   补上了具体的服务定义，这次一并加进 `docker-compose.yml`。
+
+## 13. 自动化测试
+
+新增 `automation/tests/test_redis_store_and_worker.py`，覆盖：
 
 - 幂等（同 key 重复提交只入队一次；不同 key 各自入队）
 - 优先级排序（`effective_priority` 更高的先被 claim）
@@ -204,15 +262,34 @@ curl http://localhost:8020/health
   执行完 streak 清零）
 - 内部执行快照（`job-payload`）正确保存，任务完成后被清理
 - Worker 成功执行、暂时性失败重试直到最终 failed
+- 错误分类（400/401/403/422 不重试；408/429/5xx/网络错误才重试）
 - Bearer Header 只在 `POLYGATE_API_KEY` 配置时才携带
 
 运行前提：本地/CI 有可访问的 Redis（默认用 DB 15，测试前后自动
 `FLUSHDB`，不影响 DB 0 的真实数据）。
 
+**只跑这一份新测试**（不需要 `AUTOMATION_REDIS_URL`，因为这份测试自己
+创建 `RedisAutomationStore` 实例，不经过 `main.py` 的模块级工厂函数）：
+
 ```bash
 AUTOMATION_TEST_REDIS_URL=redis://127.0.0.1:6379/15 \
-  python -m pytest automation/app/tests/test_redis_store_and_worker.py -v
+  python -m pytest automation/tests/test_redis_store_and_worker.py -v
 ```
+
+**跑 Automation 全部测试套件**（包括 `test_api.py`、
+`test_contract_alignment.py` 这些既有测试）：由于这些既有测试会导入
+`automation.app.main`，而 `main.py` 现在要求启动时必须配置好
+`AUTOMATION_REDIS_URL`（不然会 fail-fast 报错，见"待办"一节的说明），
+**两个环境变量都要设置**才能让全部测试一起跑通：
+
+```bash
+AUTOMATION_REDIS_URL=redis://127.0.0.1:6379/15 \
+AUTOMATION_TEST_REDIS_URL=redis://127.0.0.1:6379/15 \
+  python -m pytest automation/tests/ -v
+```
+
+（这是 C 复测时验证过的组合，26/26 全部通过。两个变量可以指向同一个
+测试用 DB，不会互相冲突。）
 
 ## 队列优先级 / aging / fairness（已按 A 确认的方案实现）
 
@@ -260,11 +337,14 @@ Worker 这边同样做成 opt-in：环境变量 `POLYGATE_API_KEY`（单数，Wo
 Redis、也不会出现在任何日志输出里**——`execute_job()` 里日志只打印
 `job_id`，不打印 headers 或 payload 内容。
 
-错误处理：如果 Gateway 返回 401/403（说明 `POLYGATE_API_KEY` 不对，或者
-根本没配但 Gateway 那边要求校验），Worker **直接判定为最终失败，不会
-浪费重试次数**——因为同一个错误的 key，重试多少次结果都一样，属于
-"永久性"错误，跟网络超时、5xx 这类"重试一下可能就好了"的暂时性错误
-是两码事，需要区别对待。
+错误处理：Worker 按状态码把失败分成两类，不是所有失败都无脑重试：
+
+- **不重试，直接判最终失败**：400（参数错误）、401/403（认证失败）、
+  422（校验不通过）——这些都是"请求本身有问题"，同一个请求重试多少次
+  结果都一样，重试只是白白浪费重试次数、拖慢最终失败判定的速度。
+- **值得重试**：408（超时）、429（限流）、5xx（服务端错误），以及所有
+  网络层的异常（连接失败、超时异常等）——这些属于"暂时性"问题，等一下
+  再试可能就好了，走正常的指数退避重试逻辑。
 
 ## 需要 C 在 `deploy/` 里补充的内容（未直接改动，供参考；暂不部署 EKS）
 

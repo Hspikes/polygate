@@ -225,6 +225,47 @@ class WorkerExecuteJobTest(RedisStoreTestBase):
         self.assertEqual(final.status.value, "failed", "认证失败应该直接判定为最终失败，不占用重试次数")
         self.assertEqual(worker_module._retry_counts.get(job.job_id, 0), 0, "认证失败不应该消耗任何重试次数")
 
+    def _assert_status_code_retryable(self, status_code: int, expected_retryable: bool):
+        """辅助方法：给定一个状态码，断言 _is_retryable() 的判断结果符合预期。"""
+        import httpx as httpx_module
+        mock_resp = MagicMock()
+        mock_resp.status_code = status_code
+        error = httpx_module.HTTPStatusError(f"status {status_code}", request=MagicMock(), response=mock_resp)
+        self.assertEqual(
+            worker_module._is_retryable(error), expected_retryable,
+            f"状态码 {status_code} 的可重试判断不符合预期",
+        )
+
+    def test_non_retryable_status_codes_do_not_retry(self):
+        # 客户端错误：请求本身有问题，重试没有意义
+        for status_code in (400, 401, 403, 422):
+            self._assert_status_code_retryable(status_code, expected_retryable=False)
+
+    def test_retryable_status_codes_do_retry(self):
+        # 超时/限流/服务端错误：属于暂时性问题，值得重试
+        for status_code in (408, 429, 500, 502, 503):
+            self._assert_status_code_retryable(status_code, expected_retryable=True)
+
+    def test_network_level_errors_are_retryable(self):
+        # 不是 HTTPStatusError 的情况（比如连接失败、超时异常），默认可以重试
+        self.assertTrue(worker_module._is_retryable(RuntimeError("connection reset")))
+
+    @patch("automation.app.worker.httpx.Client")
+    def test_validation_error_400_fails_immediately(self, mock_client_cls):
+        job = self._enqueue_one(idem_key="job-key-400")
+
+        import httpx as httpx_module
+        mock_resp = MagicMock()
+        mock_resp.status_code = 400
+        error = httpx_module.HTTPStatusError("bad request", request=MagicMock(), response=mock_resp)
+        mock_client_cls.return_value.__enter__.return_value.post.side_effect = error
+
+        worker_module.execute_job(self.store, job)
+
+        final = self.store.get_job(job.job_id)
+        self.assertEqual(final.status.value, "failed", "400 参数错误应该直接判定为最终失败，不占用重试次数")
+        self.assertEqual(worker_module._retry_counts.get(job.job_id, 0), 0)
+
     @patch("automation.app.worker.httpx.Client")
     def test_bearer_header_only_added_when_key_configured(self, mock_client_cls):
         job = self._enqueue_one(idem_key="job-key-bearer")

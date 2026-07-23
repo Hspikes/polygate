@@ -95,14 +95,21 @@ def _handle_signal(signum, frame):
 def _is_retryable(exc: Exception) -> bool:
     """判断这个错误值不值得重试。
 
-    认证失败（401/403）是"永久性"的——同一个 key 不管重试多少次，
-    结果都一样，重试只是白白浪费重试次数、拖慢最终失败判定的速度，
-    所以这类错误应该直接判失败，不占用 MAX_RETRIES 的额度。
+    分类规则（按状态码）：
+    - 400/401/403/422：客户端错误——请求本身有问题（认证失败、参数不对、
+      校验不过），同一个请求重试多少次结果都一样，属于"永久性"错误，
+      直接判失败，不浪费重试次数。
+    - 408/429：请求超时/被限流——属于"暂时性"的，等一下再试可能就好了。
+    - 5xx：服务端错误——同样是暂时性的，值得重试。
+    - 不是 HTTPStatusError 的情况（比如网络层的连接失败、超时异常）：
+      默认当作暂时性错误，值得重试。
     """
     if isinstance(exc, httpx.HTTPStatusError):
-        if exc.response.status_code in (401, 403):
-            return False
-    return True
+        status_code = exc.response.status_code
+        if status_code in (408, 429) or status_code >= 500:
+            return True
+        return False  # 400/401/403/422 以及其他未特别列出的 4xx，都不重试
+    return True  # 网络层错误（超时、连接失败等），值得重试
 
 
 def execute_job(store: RedisAutomationStore, job) -> None:
@@ -145,7 +152,7 @@ def execute_job(store: RedisAutomationStore, job) -> None:
             store.requeue_job(job_id)
         else:
             JOBS_FAILED_TOTAL.inc()
-            reason = "auth_failure" if not _is_retryable(exc) else "retries_exhausted"
+            reason = "non_retryable_client_error" if not _is_retryable(exc) else "retries_exhausted"
             log.error(f'{{"event":"job_failed","job_id":"{job_id}","reason":"{reason}","err":"{exc}"}}')
             store.fail_job(job_id, str(exc))
     finally:
