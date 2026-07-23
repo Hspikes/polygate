@@ -107,6 +107,20 @@ class _ProviderBreaker:
                 self.state = State.OPEN
                 self._opened_at = now
 
+    def record_cancelled(self):
+        """Release a half-open probe abandoned because the client disconnected.
+
+        A downstream cancellation says nothing about provider health. Closed
+        breakers keep their existing history; a half-open breaker returns to
+        OPEN so a future request can perform a fresh probe after cooldown.
+        """
+        now = time.time()
+        with self._lock:
+            if self.state == State.HALF_OPEN:
+                self.state = State.OPEN
+                self._opened_at = now
+                self._half_open_probe_in_flight = False
+
     def reason(self) -> str:
         return {
             State.CLOSED: "healthy",
@@ -140,6 +154,9 @@ class CircuitBreakerRegistry:
 
     def record_failure(self, provider_name: str):
         self._get(provider_name).record_failure()
+
+    def record_cancelled(self, provider_name: str):
+        self._get(provider_name).record_cancelled()
 
     def health_snapshot(self) -> dict[str, str]:
         """

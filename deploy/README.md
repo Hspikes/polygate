@@ -49,7 +49,8 @@ IMAGE_TAG=<刚才输出的提交号> ./scripts/deploy-kubernetes-application.sh
 - **监控部署**：实际连接集群前先运行
   `./scripts/kubernetes-monitoring-preflight.sh`。详细说明见
   [`monitoring/README.md`](./monitoring/README.md)。
-- **真实 key 用 Secret**：`kubectl create secret generic provider-secrets --from-literal=real-a-key=xxx`，绝不写进清单。
+- **真实 Provider key 用 Secret**：`kubectl create secret generic provider-secrets --from-literal=real-a-key=xxx`，绝不写进清单。
+- **Agent 客户端 key 也用 Secret**：`kubectl create secret generic gateway-client-secrets --from-literal=api-keys='<long-random-key>'`。多个过渡期 key 可用英文逗号分隔；公网开放 `/v1` 前必须创建该 Secret。
 
 ## Web 入口验证
 
