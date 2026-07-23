@@ -21,12 +21,35 @@
 ./scripts/build-kubernetes-images.sh
 ```
 
-脚本会构建 Gateway、Mock Provider 和 Web 三个镜像。登录 ECR 后再显式开启推送，
-并记住输出的 `IMAGE_TAG`：
+脚本默认构建 Gateway、Mock Provider 和 Web 三个稳定镜像。登录 ECR 后再显式开启
+推送，并记住输出的 `IMAGE_TAG`：
 
 ```bash
 PUSH_IMAGES=1 ./scripts/build-kubernetes-images.sh
 ```
+
+## C1 Automation 私有接线
+
+**C1 不立即部署到 EKS**。当前 Automation 仍使用进程内存保存 Preview 和 Job，
+Redis Store/Worker 集成通过前只准备清单和脚本，不创建 ECR 仓库、不推送镜像、
+也不修改当前集群。
+
+Automation 的构建和部署均为显式 opt-in，默认
+`INCLUDE_AUTOMATION=0`，现有 P0/P1 命令行为不变。未来完成本地集成后，使用同一个
+不可变标签执行：
+
+```bash
+C1_IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
+
+IMAGE_TAG="$C1_IMAGE_TAG" INCLUDE_AUTOMATION=1 PUSH_IMAGES=1 \
+  ./scripts/build-kubernetes-images.sh
+
+IMAGE_TAG="$C1_IMAGE_TAG" INCLUDE_AUTOMATION=1 \
+  ./scripts/deploy-kubernetes-application.sh
+```
+
+集群内地址固定为 `http://automation:8020`，Service 为 ClusterIP。当前单副本限制
+必须保持到 A/B 将状态迁移到 Redis 并完成并发测试之后。
 
 ## 部署顺序（第 4 天集成）
 
