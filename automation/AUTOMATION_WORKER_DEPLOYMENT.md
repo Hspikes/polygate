@@ -42,7 +42,7 @@
 
 ```
 # API（原有，不变）
-uvicorn automation.app.main:app --host 0.0.0.0 --port 8020
+uvicorn automation.app.main:get_app --factory --host 0.0.0.0 --port 8020
 
 # Worker（新增）
 python -m automation.app.worker
