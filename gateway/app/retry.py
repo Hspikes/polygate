@@ -10,11 +10,17 @@
 4xx(比如 401 密钥错误、400 参数错误）不重试——这类错误重试也没用，
 只会白白拖慢用户等待的时间。
 """
+import asyncio
 import time
 import random
 import httpx
 
-from app.adapters import call_provider, AdapterResult
+from app.adapters import (
+    AdapterResult,
+    OpenedProviderStream,
+    call_provider,
+    open_provider_stream,
+)
 from app.circuit_breaker import CircuitBreakerRegistry
 
 
@@ -34,11 +40,12 @@ def _is_transient_error(exc: Exception) -> bool:
 
 def call_provider_with_resilience(
     provider: dict,
-    messages: list[dict],
+    payload: dict,
     breaker: CircuitBreakerRegistry,
     timeout_s: float = 10.0,
     max_retries: int = 2,
     base_delay_s: float = 0.2,
+    provider_call=call_provider,
 ) -> AdapterResult:
     """
     包裹了 adapters.call_provider() 的"加固版"调用：
@@ -55,7 +62,7 @@ def call_provider_with_resilience(
     last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
-            result = call_provider(provider, messages, timeout_s=timeout_s)
+            result = provider_call(provider, payload, timeout_s=timeout_s)
             breaker.record_success(name)
             result.retries = attempt  # 记录这次成功之前，一共重试了几次
             return result
@@ -70,4 +77,38 @@ def call_provider_with_resilience(
 
     # 理论上走不到这里，保险起见还是记一次失败再抛出
     breaker.record_failure(name)
+    raise last_exc
+
+
+async def open_provider_stream_with_resilience(
+    provider: dict,
+    payload: dict,
+    breaker: CircuitBreakerRegistry,
+    timeout_s: float = 90.0,
+    max_retries: int = 2,
+    base_delay_s: float = 0.2,
+) -> OpenedProviderStream:
+    """Open and prefetch an SSE stream with retry before downstream commit."""
+    name = provider["name"]
+    if not breaker.allow_request(name):
+        raise ProviderUnavailableError(f"{name} 当前处于熔断状态，暂时跳过")
+
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            opened = await open_provider_stream(provider, payload, timeout_s=timeout_s)
+            breaker.record_success(name)
+            opened.retries = attempt
+            return opened
+        except Exception as exc:
+            last_exc = exc
+            is_last_attempt = attempt == max_retries
+            if not _is_transient_error(exc) or is_last_attempt:
+                breaker.record_failure(name)
+                raise
+            delay = base_delay_s * (2 ** attempt) + random.uniform(0, base_delay_s)
+            await asyncio.sleep(delay)
+
+    breaker.record_failure(name)
+    assert last_exc is not None
     raise last_exc
