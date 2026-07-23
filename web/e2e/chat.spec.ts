@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
   let turn = 0;
-  await page.route("**/api/health", (route) => route.fulfill({ json: { status: "ok" } }));
+  await page.route("**/api/v1/models", (route) => route.fulfill({ json: { object: "list", data: [] } }));
   await page.route("**/api/v1/chat/completions", async (route) => {
     turn += 1;
     await route.fulfill({

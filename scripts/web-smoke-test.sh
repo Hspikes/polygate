@@ -44,6 +44,10 @@ if not skip_web_health:
     assert status == 200 and health.strip() == "ok", (status, health)
     print("OK  Web health")
 
+status, models = get("/api/v1/models")
+assert status == 200 and json.loads(models).get("object") == "list", (status, models)
+print("OK  Authenticated Gateway readiness")
+
 status, index = get("/")
 assert status == 200 and '<div id="root"></div>' in index, "React entry document missing"
 print("OK  React entry document")
