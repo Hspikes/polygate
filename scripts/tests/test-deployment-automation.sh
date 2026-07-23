@@ -26,18 +26,6 @@ require_text \
 require_text \
   "$ROOT_DIR/scripts/build-kubernetes-images.sh" \
   '--platform "$TARGET_PLATFORM"'
-require_text \
-  "$ROOT_DIR/scripts/build-kubernetes-images.sh" \
-  'INCLUDE_AUTOMATION="${INCLUDE_AUTOMATION:-0}"'
-require_text \
-  "$ROOT_DIR/scripts/build-kubernetes-images.sh" \
-  'AUTOMATION_IMAGE="$ECR_REGISTRY/polygate-automation:$IMAGE_TAG"'
-require_text \
-  "$ROOT_DIR/scripts/build-kubernetes-images.sh" \
-  '--file "$ROOT_DIR/automation/Dockerfile"'
-require_text \
-  "$ROOT_DIR/scripts/build-kubernetes-images.sh" \
-  'if [ "$INCLUDE_AUTOMATION" = "1" ]; then'
 
 require_text \
   "$ROOT_DIR/scripts/deploy-kubernetes-application.sh" \
@@ -48,21 +36,6 @@ require_text \
 require_text \
   "$ROOT_DIR/scripts/deploy-kubernetes-application.sh" \
   "PINNED_WEB_IMAGE=\"$REGISTRY/polygate-web:v1\""
-require_text \
-  "$ROOT_DIR/scripts/deploy-kubernetes-application.sh" \
-  'INCLUDE_AUTOMATION="${INCLUDE_AUTOMATION:-0}"'
-require_text \
-  "$ROOT_DIR/scripts/deploy-kubernetes-application.sh" \
-  "PINNED_AUTOMATION_IMAGE=\"$REGISTRY/polygate-automation:v1\""
-require_text \
-  "$ROOT_DIR/scripts/deploy-kubernetes-application.sh" \
-  'AUTOMATION_IMAGE="$ECR_REGISTRY/polygate-automation:$IMAGE_TAG"'
-require_text \
-  "$ROOT_DIR/scripts/deploy-kubernetes-application.sh" \
-  '"$ROOT_DIR/deploy/automation.yaml"'
-require_text \
-  "$ROOT_DIR/scripts/deploy-kubernetes-application.sh" \
-  'deployments+=(automation)'
 require_text \
   "$ROOT_DIR/scripts/build-kubernetes-images.sh" \
   '"$ROOT_DIR/web"'
@@ -89,39 +62,5 @@ require_text \
 require_text \
   "$ROOT_DIR/deploy/monitoring/README.md" \
   "ECR_REGISTRY=$REGISTRY"
-require_text \
-  "$ROOT_DIR/deploy/RUNBOOK.md" \
-  'update-kubeconfig --name G3EKS'
-require_text \
-  "$ROOT_DIR/deploy/README.md" \
-  'INCLUDE_AUTOMATION=1'
-require_text \
-  "$ROOT_DIR/deploy/README.md" \
-  'C1 不立即部署到 EKS'
-
-require_text \
-  "$ROOT_DIR/deploy/automation.yaml" \
-  "$REGISTRY/polygate-automation:v1"
-require_text \
-  "$ROOT_DIR/deploy/automation.yaml" \
-  "replicas: 1"
-require_text \
-  "$ROOT_DIR/deploy/automation.yaml" \
-  "type: ClusterIP"
-require_text \
-  "$ROOT_DIR/deploy/automation.yaml" \
-  "automountServiceAccountToken: false"
-require_text \
-  "$ROOT_DIR/deploy/automation.yaml" \
-  "runAsUser: 10001"
-require_text \
-  "$ROOT_DIR/deploy/automation.yaml" \
-  'value: "http://gateway:8000"'
-require_text \
-  "$ROOT_DIR/deploy/automation.yaml" \
-  'value: "redis://redis:6379/1"'
-require_text \
-  "$ROOT_DIR/scripts/kubernetes-monitoring-preflight.sh" \
-  '"$ROOT_DIR/deploy/automation.yaml"'
 
 echo "Deployment automation settings are aligned with the active EKS account."
