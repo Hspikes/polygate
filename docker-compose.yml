@@ -25,6 +25,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       PROVIDERS_FILE: /app/providers.yaml
       REAL_A_API_KEY:  ${REAL_A_API_KEY}
+      # Set this to require Bearer auth (for example: local-development).
+      POLYGATE_API_KEYS: ${POLYGATE_API_KEYS:-}
     ports: ["8000:8000"]
     volumes:
       - ./contracts/providers.yaml:/app/providers.yaml:ro

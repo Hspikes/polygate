@@ -52,6 +52,10 @@ docker compose ps
 | Prometheus | <http://localhost:9090/targets> | 指标采集状态与查询 |
 | Grafana | <http://localhost:3000/d/polygate-overview/polygate-overview> | 业务与 Kubernetes 资源大屏 |
 
+Pi Agent 可把 PolyGate 注册为 `polygate/auto` 模型 Provider，通过 SSE 完成
+本地工具循环。无真实模型、无费用的 Mock 验证方式见
+[`gateway/README.md`](./gateway/README.md#pi-agent-可运行闭环)。
+
 推荐验证顺序：
 
 ```bash

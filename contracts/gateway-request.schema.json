@@ -1,34 +1,92 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "PolyGate Gateway Request (契约 #1)",
-  "description": "OpenAI 兼容请求 + polygate 扩展约束。所有客户端(D 的 UI / 压测器)都按此结构发。",
+  "$id": "https://polygate.example/contracts/gateway-request.schema.json",
+  "title": "PolyGate Gateway Request v2",
+  "description": "Agent-capable OpenAI Chat Completions request with PolyGate routing constraints.",
   "type": "object",
+  "additionalProperties": false,
   "required": ["model", "messages"],
   "properties": {
-    "model": {
-      "type": "string",
-      "description": "填 'auto' 让网关自动路由；也可指定某个 provider name 强制路由",
-      "examples": ["auto", "real-a", "mock-a"]
-    },
+    "model": { "type": "string", "minLength": 1 },
     "messages": {
       "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["role", "content"],
-        "properties": {
-          "role": { "type": "string", "enum": ["system", "user", "assistant"] },
-          "content": { "type": "string" }
-        }
-      }
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/message" }
+    },
+    "tools": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "tool_choice": {
+      "oneOf": [
+        { "type": "string", "enum": ["none", "auto", "required"] },
+        { "type": "object" }
+      ]
+    },
+    "parallel_tool_calls": { "type": "boolean" },
+    "temperature": { "type": "number" },
+    "top_p": { "type": "number" },
+    "max_tokens": { "type": "integer", "minimum": 1 },
+    "max_completion_tokens": { "type": "integer", "minimum": 1 },
+    "stop": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    },
+    "response_format": { "type": "object" },
+    "stream": { "type": "boolean", "default": false },
+    "stream_options": { "type": "object" },
+    "seed": { "type": "integer" },
+    "frequency_penalty": { "type": "number" },
+    "presence_penalty": { "type": "number" },
+    "logit_bias": { "type": "object", "additionalProperties": { "type": "number" } },
+    "logprobs": { "type": "boolean" },
+    "top_logprobs": { "type": "integer" },
+    "user": { "type": "string" },
+    "service_tier": { "type": "string" },
+    "reasoning_effort": { "type": "string" },
+    "store": { "type": "boolean" },
+    "polygate": { "$ref": "#/definitions/polygate" }
+  },
+  "definitions": {
+    "contentBlock": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "type": "string" } },
+      "additionalProperties": true
+    },
+    "message": {
+      "type": "object",
+      "required": ["role"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["system", "developer", "user", "assistant", "tool"]
+        },
+        "content": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "null" },
+            { "type": "array", "items": { "$ref": "#/definitions/contentBlock" } }
+          ]
+        },
+        "name": { "type": "string" },
+        "tool_calls": { "type": "array", "items": { "type": "object" } },
+        "tool_call_id": { "type": "string" }
+      },
+      "additionalProperties": true
     },
     "polygate": {
       "type": "object",
-      "description": "PolyGate 专属约束，缺省时用下面 default 值",
+      "additionalProperties": false,
       "properties": {
-        "latency_target_ms": { "type": "integer", "default": 3000 },
-        "max_cost_usd":      { "type": "number",  "default": 0.01 },
-        "privacy":           { "type": "string",  "enum": ["standard", "high"], "default": "standard" },
-        "quality":           { "type": "string",  "enum": ["balanced", "high", "cheap"], "default": "balanced" }
+        "latency_target_ms": { "type": "integer", "minimum": 1, "default": 3000 },
+        "max_cost_usd": { "type": "number", "minimum": 0, "default": 0.01 },
+        "privacy": { "type": "string", "enum": ["standard", "high"], "default": "standard" },
+        "quality": { "type": "string", "enum": ["balanced", "high", "cheap"], "default": "balanced" },
+        "cache_control": { "type": "string", "enum": ["auto", "no-store"], "default": "auto" },
+        "session_id": { "type": "string", "minLength": 1, "maxLength": 256 }
       }
     }
   }

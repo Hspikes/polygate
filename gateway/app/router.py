@@ -18,12 +18,32 @@ def _healthy(provider: dict, health: dict) -> bool:
     return health.get(provider["name"], "healthy") != "down"
 
 
-def select_provider(providers: list[dict], messages: list[dict], c, health: dict | None = None):
+def missing_capabilities(provider: dict, required_capabilities: set[str]) -> set[str]:
+    capabilities = provider.get("capabilities", {})
+    return {
+        capability
+        for capability in required_capabilities
+        if capabilities.get(capability) is not True
+    }
+
+
+def _supports(provider: dict, required_capabilities: set[str]) -> bool:
+    return not missing_capabilities(provider, required_capabilities)
+
+
+def select_provider(
+    providers: list[dict],
+    messages: list[dict],
+    c,
+    health: dict | None = None,
+    required_capabilities: set[str] | None = None,
+):
     """
     Returns (chosen_provider_dict, reason_str, candidates_debug).
     Raises RuntimeError with an explanatory message if nothing qualifies.
     """
     health = health or {}
+    required_capabilities = required_capabilities or set()
     in_tok = rough_input_tokens(messages)
     reasons = []
 
@@ -33,10 +53,18 @@ def select_provider(providers: list[dict], messages: list[dict], c, health: dict
         pool = [p for p in pool if p.get("privacy") == "internal"]
         reasons.append("privacy=high → 仅保留 internal Provider")
 
-    # 2. health filter
+    # 2. Agent capabilities are hard gates. Unknown means unsupported so that
+    # tool/stream requests can never fall through to a legacy text-only mock.
+    if required_capabilities:
+        pool = [p for p in pool if _supports(p, required_capabilities)]
+        reasons.append(
+            "能力要求=" + ",".join(sorted(required_capabilities))
+        )
+
+    # 3. health filter
     pool = [p for p in pool if _healthy(p, health)]
 
-    # 3. budget filter (rough pre-call estimate)
+    # 4. budget filter (rough pre-call estimate)
     def est(p):
         return estimate_cost(p, in_tok, ASSUMED_OUTPUT_TOKENS)
     affordable = [p for p in pool if est(p) <= c.max_cost_usd]
@@ -46,15 +74,19 @@ def select_provider(providers: list[dict], messages: list[dict], c, health: dict
         reasons.append(f"没有 Provider 在预算 ${c.max_cost_usd} 内，改选整体最便宜者")
 
     if not pool:
-        raise RuntimeError("no eligible provider after privacy/health filtering")
+        requirements = ",".join(sorted(required_capabilities)) or "none"
+        raise RuntimeError(
+            "no eligible provider after privacy/capability/health filtering "
+            f"(required_capabilities={requirements})"
+        )
 
-    # 4. latency awareness: prefer those meeting the latency target
+    # 5. latency awareness: prefer those meeting the latency target
     within_latency = [p for p in pool if p.get("typical_latency_ms", 0) <= c.latency_target_ms]
     latency_pool = within_latency or pool
     if not within_latency:
         reasons.append(f"无 Provider 满足 {c.latency_target_ms}ms 延迟目标，放宽此约束")
 
-    # 5. quality policy → final pick
+    # 6. quality policy → final pick
     reals = [p for p in latency_pool if p.get("kind") == "real"]
 
     if c.quality == "high":
