@@ -236,6 +236,12 @@ require_text \
 require_text \
   "$ROOT_DIR/deploy/README.md" \
   'kubectl port-forward deployment/automation-worker 9000:9000'
+require_text \
+  "$ROOT_DIR/deploy/README.md" \
+  'uvicorn automation.app.main:get_app --factory --host 0.0.0.0 --port 8020'
+reject_text \
+  "$ROOT_DIR/deploy/README.md" \
+  'uvicorn automation.app.main:app'
 
 require_resource_text \
   "$ROOT_DIR/deploy/automation.yaml" \
