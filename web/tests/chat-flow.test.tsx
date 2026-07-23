@@ -41,11 +41,16 @@ describe("chat flow", () => {
     const composer = await screen.findByRole("textbox", { name: "消息内容" });
     await user.type(composer, "first{enter}");
     expect(await screen.findByText("answer 1")).toBeInTheDocument();
-    expect(screen.getAllByText("PolyGate 回复")).toHaveLength(1);
+    expect(screen.queryByText("PolyGate 回复")).not.toBeInTheDocument();
+    expect(screen.queryByText("由智能路由选定模型生成")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "加载离线演示" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新生成回答" })).toBeInTheDocument();
     expect(screen.getAllByText("路由策略")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /路由偏好/ })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: /路由策略/ })).toHaveAttribute("aria-expanded", "false");
     await user.type(composer, "second{enter}");
     expect(await screen.findByText("answer 2")).toBeInTheDocument();
-    expect(screen.getAllByText("PolyGate 回复")).toHaveLength(2);
+    expect(screen.queryByText("PolyGate 回复")).not.toBeInTheDocument();
     expect(screen.getAllByText("路由策略")).toHaveLength(2);
 
     const chatCalls = vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/v1/chat/completions");
@@ -55,6 +60,68 @@ describe("chat flow", () => {
       { role: "assistant", content: "answer 1" },
       { role: "user", content: "second" },
     ]);
+  });
+
+  it("collapses routing preferences on pointer leave after a setting was changed", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const trigger = await screen.findByRole("button", { name: /路由偏好/ });
+    const panel = trigger.closest(".routing-panel");
+    expect(panel).not.toBeNull();
+
+    await user.hover(panel!);
+    await waitFor(() => expect(trigger).toHaveAttribute("aria-expanded", "true"));
+    const qualitySelect = screen.getByRole("combobox", { name: "质量" });
+    await user.selectOptions(qualitySelect, "high");
+    expect(qualitySelect).toHaveValue("high");
+
+    await user.unhover(panel!);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(panel).not.toHaveClass("is-expanded");
+  });
+
+  it("does not return Chrome 150 scroll promises from the message effect", async () => {
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(
+      () => Promise.resolve(true) as never,
+    );
+    const user = userEvent.setup();
+    render(<App />);
+
+    const composer = await screen.findByRole("textbox", { name: "消息内容" });
+    await user.type(composer, "chrome 150{enter}");
+
+    expect(await screen.findByText("answer 1")).toBeInTheDocument();
+    expect(composer).toBeVisible();
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("collapses and reopens the desktop conversation rail", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const sidebar = await screen.findByRole("complementary", { name: "会话列表" });
+    await user.click(screen.getByRole("button", { name: "收起会话栏" }));
+    expect(sidebar).toHaveClass("collapsed");
+
+    await user.click(screen.getByRole("button", { name: "展开会话栏" }));
+    expect(sidebar).not.toHaveClass("collapsed");
+  });
+
+  it("dismisses a conversation menu from outside or with Escape", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const manage = await screen.findByRole("button", { name: /管理 新会话/ });
+    await user.click(manage);
+    expect(screen.getByRole("menuitem", { name: "重命名" })).toBeInTheDocument();
+
+    await user.click(document.body);
+    expect(screen.queryByRole("menuitem", { name: "重命名" })).not.toBeInTheDocument();
+
+    await user.click(manage);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menuitem", { name: "重命名" })).not.toBeInTheDocument();
   });
 
   it("uses Shift+Enter for a newline without sending", async () => {
@@ -95,7 +162,7 @@ describe("chat flow", () => {
     const user = userEvent.setup();
     const { container } = render(<App />);
     await user.type(await screen.findByRole("textbox", { name: "消息内容" }), "retry me{enter}");
-    expect(await screen.findByText("Provider 错误")).toBeInTheDocument();
+    expect(await screen.findByText("模型服务错误")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "重试" }));
     expect(await screen.findByText("recovered")).toBeInTheDocument();
     expect(container.querySelectorAll(".user-message .message-bubble")).toHaveLength(1);
@@ -113,7 +180,18 @@ describe("chat flow", () => {
     render(<App />);
     await user.type(await screen.findByRole("textbox", { name: "消息内容" }), "cancel me{enter}");
     await user.click(await screen.findByRole("button", { name: "取消生成" }));
-    expect(await screen.findByText("这次生成已取消。")).toBeInTheDocument();
+    expect(await screen.findByText("生成已停止")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+
+  it("offers the local fixture only when the gateway is offline", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/health") return new Response("{}", { status: 503 });
+      throw new Error(`unexpected fetch ${String(input)}`);
+    }));
+
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: "加载离线演示" })).toBeInTheDocument();
   });
 });

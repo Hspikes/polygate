@@ -41,7 +41,7 @@ export async function requestCompletion(payload: GatewayRequest, signal: AbortSi
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     throw new GatewayClientError({
       kind: "network",
-      message: "无法连接 Gateway，请检查服务和网络后重试。",
+      message: "无法连接网关，请检查服务和网络后重试。",
     });
   }
 
@@ -49,7 +49,7 @@ export async function requestCompletion(payload: GatewayRequest, signal: AbortSi
     const detail = await responseDetail(response);
     throw new GatewayClientError({
       kind: classifyError(response.status, detail),
-      message: detail || `Gateway 返回 HTTP ${response.status}`,
+      message: detail || `网关返回 HTTP ${response.status}`,
       status: response.status,
     });
   }
@@ -58,7 +58,7 @@ export async function requestCompletion(payload: GatewayRequest, signal: AbortSi
   if (!parsed.success) {
     throw new GatewayClientError({
       kind: "validation",
-      message: "Gateway 响应不符合客户端契约。",
+      message: "网关响应不符合客户端契约。",
     });
   }
   return parsed.data;

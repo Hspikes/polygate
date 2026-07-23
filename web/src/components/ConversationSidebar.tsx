@@ -1,14 +1,27 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Conversation } from "../domain/conversation";
 import { useConversations } from "../store/ConversationProvider";
-import { CloseIcon, MoreIcon, PlusIcon, SparkIcon } from "./icons";
+import { CloseIcon, MoreIcon, PlusIcon, PolyGateMark, SidebarIcon } from "./icons";
 
 interface ConversationSidebarProps {
   open: boolean;
+  collapsed: boolean;
   onClose: () => void;
+  onToggleCollapsed: () => void;
 }
 
-const timestamp = new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" });
+const calendarDate = new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" });
+
+function timestamp(value: string): string {
+  const date = new Date(value);
+  const today = new Date();
+  const dayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const daysAgo = Math.round((dayStart - dateStart) / 86_400_000);
+  if (daysAgo === 0) return "今天";
+  if (daysAgo === 1) return "昨天";
+  return calendarDate.format(date);
+}
 
 function ConversationItem({ conversation, active, onSelect }: {
   conversation: Conversation;
@@ -17,7 +30,25 @@ function ConversationItem({ conversation, active, onSelect }: {
 }) {
   const { renameConversation, deleteConversation } = useConversations();
   const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [title, setTitle] = useState(conversation.title);
+  const menu = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeFromOutside = (event: PointerEvent) => {
+      if (!menu.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const closeFromEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeFromOutside);
+    document.addEventListener("keydown", closeFromEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeFromOutside);
+      document.removeEventListener("keydown", closeFromEscape);
+    };
+  }, [menuOpen]);
 
   const save = () => {
     renameConversation(conversation.id, title);
@@ -45,36 +76,54 @@ function ConversationItem({ conversation, active, onSelect }: {
       ) : (
         <button className="conversation-select" type="button" onClick={onSelect}>
           <span>{conversation.title}</span>
-          <small>{timestamp.format(new Date(conversation.updatedAt))}</small>
+          <small>{timestamp(conversation.updatedAt)}</small>
         </button>
       )}
-      <details className="conversation-menu">
-        <summary aria-label={`管理 ${conversation.title}`}><MoreIcon /></summary>
-        <div className="menu-popover">
-          <button type="button" onClick={() => setEditing(true)}>重命名</button>
-          <button className="danger" type="button" onClick={() => deleteConversation(conversation.id)}>删除</button>
-        </div>
-      </details>
+      <div ref={menu} className={`conversation-menu${menuOpen ? " open" : ""}`}>
+        <button
+          className="conversation-menu-trigger"
+          type="button"
+          aria-label={`管理 ${conversation.title}`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((open) => !open)}
+        ><MoreIcon /></button>
+        {menuOpen && (
+          <div className="menu-popover" role="menu">
+            <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setEditing(true); }}>重命名</button>
+            <button className="danger" type="button" role="menuitem" onClick={() => deleteConversation(conversation.id)}>删除</button>
+          </div>
+        )}
+      </div>
     </li>
   );
 }
 
-export function ConversationSidebar({ open, onClose }: ConversationSidebarProps) {
+export function ConversationSidebar({ open, collapsed, onClose, onToggleCollapsed }: ConversationSidebarProps) {
   const { state, createConversation, selectConversation, clearAll } = useConversations();
 
   return (
     <>
       {open && <button className="sidebar-backdrop" type="button" aria-label="关闭会话栏" onClick={onClose} />}
-      <aside className={`sidebar ${open ? "open" : ""}`} aria-label="会话列表">
+      <aside className={`sidebar ${open ? "open" : ""} ${collapsed ? "collapsed" : ""}`} aria-label="会话列表">
         <div className="sidebar-brand">
-          <SparkIcon />
+          <PolyGateMark className="polygate-mark" />
           <span>PolyGate</span>
+          <button
+            className="icon-button sidebar-toggle"
+            type="button"
+            aria-label={collapsed ? "展开会话栏" : "收起会话栏"}
+            title={collapsed ? "展开会话栏" : "收起会话栏"}
+            onClick={onToggleCollapsed}
+          >
+            <SidebarIcon />
+          </button>
           <button className="icon-button sidebar-close" type="button" aria-label="关闭会话栏" onClick={onClose}>
             <CloseIcon />
           </button>
         </div>
         <button className="new-conversation" type="button" onClick={() => { createConversation(); onClose(); }}>
-          <PlusIcon /> 新建会话
+          <PlusIcon /> <span>新建会话</span>
         </button>
         <nav className="conversation-nav">
           <p className="section-label">最近会话</p>
