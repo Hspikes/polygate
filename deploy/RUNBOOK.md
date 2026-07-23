@@ -30,7 +30,7 @@
 ## 2. 确认能连上集群
 
 ```bash
-aws eks --region us-east-1 update-kubeconfig --name tan_EKS
+aws eks --region us-east-1 update-kubeconfig --name G3EKS
 kubectl get nodes
 ```
 - 预期：2 个节点，STATUS = `Ready`。
