@@ -50,13 +50,13 @@ class GatewayRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    model: str = "auto"
+    model: str = Field(default="auto", min_length=1)
     messages: list[Message] = Field(min_length=1)
     tools: Optional[list[dict[str, Any]]] = None
-    tool_choice: Optional[str | dict[str, Any]] = None
+    tool_choice: Optional[Literal["none", "auto", "required"] | dict[str, Any]] = None
     parallel_tool_calls: Optional[bool] = None
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
+    temperature: Optional[float] = Field(default=None, ge=0, le=2)
+    top_p: Optional[float] = Field(default=None, ge=0, le=1)
     max_tokens: Optional[int] = Field(default=None, gt=0)
     max_completion_tokens: Optional[int] = Field(default=None, gt=0)
     stop: Optional[str | list[str]] = None
@@ -64,11 +64,11 @@ class GatewayRequest(BaseModel):
     stream: bool = False
     stream_options: Optional[dict[str, Any]] = None
     seed: Optional[int] = None
-    frequency_penalty: Optional[float] = None
-    presence_penalty: Optional[float] = None
+    frequency_penalty: Optional[float] = Field(default=None, ge=-2, le=2)
+    presence_penalty: Optional[float] = Field(default=None, ge=-2, le=2)
     logit_bias: Optional[dict[str, float]] = None
     logprobs: Optional[bool] = None
-    top_logprobs: Optional[int] = None
+    top_logprobs: Optional[int] = Field(default=None, ge=0, le=20)
     user: Optional[str] = None
     service_tier: Optional[str] = None
     reasoning_effort: Optional[str] = None
@@ -79,6 +79,12 @@ class GatewayRequest(BaseModel):
     def validate_stream_options(self):
         if self.stream_options is not None and not self.stream:
             raise ValueError("stream_options requires stream=true")
+        if self.stream_options is not None:
+            include_usage = self.stream_options.get("include_usage")
+            if include_usage is not None and not isinstance(include_usage, bool):
+                raise ValueError("stream_options.include_usage must be a boolean")
+        if self.top_logprobs is not None and self.logprobs is not True:
+            raise ValueError("top_logprobs requires logprobs=true")
         return self
 
     def provider_payload(self) -> dict[str, Any]:
@@ -99,6 +105,8 @@ class GatewayRequest(BaseModel):
             required.add("tools")
         if self.parallel_tool_calls:
             required.add("parallel_tool_calls")
+        if self.store is True:
+            required.add("store")
         if any(
             isinstance(message.content, list)
             and any(block.get("type") not in {"text", "input_text"} for block in message.content)
@@ -108,11 +116,28 @@ class GatewayRequest(BaseModel):
         return required
 
     def bypass_cache(self) -> bool:
-        """Agent/tool/stream traffic cannot safely reuse P0 JSON cache items."""
+        """Only the original role/content-only Web request is cache-safe.
+
+        The P0 cache key intentionally covers normalized messages and routing
+        policy only. Any newly supported generation option or message metadata
+        must bypass that cache; otherwise two semantically different OpenAI
+        requests can collide and return the same stored answer.
+        """
+        payload_fields = set(self.provider_payload())
+        has_generation_options = bool(
+            payload_fields - {"model", "messages", "stream"}
+        )
+        has_message_metadata = any(
+            set(message.model_dump(exclude_none=True)) - {"role", "content"}
+            for message in self.messages
+        )
         return (
             self.polygate.cache_control == "no-store"
+            or self.polygate.session_id is not None
             or self.stream
             or bool(self.tools)
+            or has_generation_options
+            or has_message_metadata
             or any(
                 message.role == "tool"
                 or bool(message.tool_calls)
