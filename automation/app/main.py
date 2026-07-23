@@ -148,7 +148,6 @@ def create_app(store: AutomationStore | None = None) -> FastAPI:
     return app
 
 
-
 def _build_default_store() -> AutomationStore:
     redis_url = os.environ.get("AUTOMATION_REDIS_URL")
     if not redis_url:
@@ -161,4 +160,11 @@ def _build_default_store() -> AutomationStore:
     return RedisAutomationStore(client)
 
 
-app = create_app(_build_default_store())
+def get_app() -> FastAPI:
+    """Uvicorn factory entrypoint: uvicorn automation.app.main:get_app --factory
+
+    只有 ASGI server 真正启动时才构造生产 app（含 AUTOMATION_REDIS_URL 检查）。
+    import 本模块不会触发这个检查，所以 test_api.py / test_contract_alignment.py
+    可以直接 import create_app / _compile_preview，不需要 Redis。
+    """
+    return create_app(_build_default_store())
