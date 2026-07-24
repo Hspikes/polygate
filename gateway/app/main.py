@@ -10,6 +10,7 @@ import time
 import uuid
 from typing import Any, AsyncIterator
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,15 +30,23 @@ from app.circuit_breaker import CircuitBreakerRegistry
 from app.cost import estimate_cost
 from app.health_checker import health_check_loop
 from app.metrics import (
+    record_budget_exhausted,
     record_cache,
+    record_failover,
     record_provider,
     record_request,
+    record_stream,
     record_usage,
     render_metrics,
 )
 from app.models import DecisionCard, GatewayRequest, Tokens
 from app.registry import load_providers
-from app.retry import call_provider_with_resilience, open_provider_stream_with_resilience
+from app.resilience import ResilienceSettings
+from app.retry import (
+    RetryBudgetExceededError,
+    call_provider_with_resilience,
+    open_provider_stream_with_resilience,
+)
 from app.router import missing_capabilities, select_provider
 
 
@@ -69,7 +78,16 @@ if CORS_ALLOW_ORIGINS:
 PROVIDERS = load_providers()
 BREAKER = CircuitBreakerRegistry()
 CACHE = Cache()
+RELIABILITY = ResilienceSettings.from_env()
 _HEALTH_TASK: asyncio.Task | None = None
+
+
+class ProviderTimeoutError(RuntimeError):
+    """The Gateway could not obtain a provider result within its budget."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
 
 
 @app.on_event("startup")
@@ -115,6 +133,23 @@ async def validation_error_handler(_request: Request, exc: RequestValidationErro
     )
 
 
+@app.exception_handler(ProviderTimeoutError)
+async def provider_timeout_handler(
+    _request: Request,
+    exc: ProviderTimeoutError,
+):
+    return JSONResponse(
+        status_code=504,
+        content={
+            "error": {
+                "message": exc.message,
+                "type": "gateway_timeout_error",
+                "code": "provider_timeout",
+            }
+        },
+    )
+
+
 @app.middleware("http")
 async def record_chat_request(request: Request, call_next):
     """Record non-stream requests here; stream generators record at EOF."""
@@ -122,7 +157,9 @@ async def record_chat_request(request: Request, call_next):
         return await call_next(request)
 
     started = time.perf_counter()
+    request_id = "req_" + uuid.uuid4().hex
     request.state.metric_started = started
+    request.state.request_id = request_id
     try:
         response = await call_next(request)
     except Exception:
@@ -130,6 +167,7 @@ async def record_chat_request(request: Request, call_next):
         raise
 
     if getattr(request.state, "defer_metrics_to_stream", False):
+        response.headers.setdefault("X-PolyGate-Request-ID", request_id)
         return response
 
     outcome = getattr(request.state, "metric_outcome", None)
@@ -141,6 +179,7 @@ async def record_chat_request(request: Request, call_next):
         else:
             outcome = "success"
     record_request(outcome, time.perf_counter() - started)
+    response.headers.setdefault("X-PolyGate-Request-ID", request_id)
     return response
 
 
@@ -239,13 +278,29 @@ def _select(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+def _new_deadline(budget_seconds: float) -> float:
+    return time.monotonic() + budget_seconds
+
+
+def _deadline_expired(deadline: float) -> bool:
+    return time.monotonic() >= deadline
+
+
+def _request_budget_exhausted(exc: Exception, deadline: float) -> bool:
+    return isinstance(exc, RetryBudgetExceededError) or _deadline_expired(deadline)
+
+
+def _provider_timed_out(exc: Exception) -> bool:
+    return isinstance(exc, (httpx.TimeoutException, TimeoutError))
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(
     req: GatewayRequest,
     request: Request,
     _authenticated: None = Depends(require_client_api_key),
 ):
-    request_id = "req_" + uuid.uuid4().hex
+    request_id = request.state.request_id
     constraints = req.polygate
     messages = req.message_dicts()
     payload = req.provider_payload()
@@ -294,6 +349,7 @@ async def chat_completions(
             raise
 
     if req.stream:
+        deadline = _new_deadline(RELIABILITY.stream_start_budget_seconds)
         return await _stream_response(
             req=req,
             request=request,
@@ -304,8 +360,10 @@ async def chat_completions(
             reason=reason,
             required_capabilities=required_capabilities,
             started=started,
+            deadline=deadline,
         )
 
+    deadline = _new_deadline(RELIABILITY.non_stream_budget_seconds)
     result, chosen, reason, tried_names = await _call_non_stream(
         req=req,
         payload=payload,
@@ -314,6 +372,8 @@ async def chat_completions(
         reason=reason,
         required_capabilities=required_capabilities,
         request=request,
+        request_id=request_id,
+        deadline=deadline,
     )
     cost = estimate_cost(chosen, result.input_tokens, result.output_tokens)
     latency_ms = int((time.perf_counter() - started) * 1000)
@@ -351,6 +411,8 @@ async def _call_non_stream(
     reason: str,
     required_capabilities: set[str],
     request: Request,
+    request_id: str,
+    deadline: float,
 ):
     tried_names: list[str] = []
     while True:
@@ -362,19 +424,51 @@ async def _call_non_stream(
                 chosen,
                 payload,
                 BREAKER,
+                timeout_s=RELIABILITY.provider_timeout_seconds,
+                max_retries=RELIABILITY.max_retries,
+                base_delay_s=RELIABILITY.retry_base_delay_seconds,
+                max_backoff_s=RELIABILITY.retry_max_backoff_seconds,
+                deadline=deadline,
                 provider_call=call_provider,
             )
             record_provider(chosen["name"], "success", time.perf_counter() - provider_started)
             return result, chosen, reason, tried_names
         except Exception as exc:
-            record_provider(chosen["name"], "error", time.perf_counter() - provider_started)
+            budget_exhausted = _request_budget_exhausted(exc, deadline)
+            provider_timed_out = budget_exhausted or _provider_timed_out(exc)
+            provider_outcome = "timeout" if provider_timed_out else "error"
+            record_provider(
+                chosen["name"],
+                provider_outcome,
+                time.perf_counter() - provider_started,
+            )
             log.info(
-                '{"event":"provider_error","provider":"%s","error_type":"%s"}',
+                '{"request_id":"%s","event":"provider_error","provider":"%s","error_type":"%s"}',
+                request_id,
                 chosen["name"],
                 type(exc).__name__,
             )
-            remaining = [provider for provider in PROVIDERS if provider["name"] not in tried_names]
+            if budget_exhausted:
+                request.state.metric_outcome = "provider_timeout"
+                record_budget_exhausted("non_stream")
+                raise ProviderTimeoutError(
+                    "Provider 调用超过网关时间预算"
+                ) from exc
+            remaining = (
+                []
+                if req.model != "auto"
+                else [
+                    provider
+                    for provider in PROVIDERS
+                    if provider["name"] not in tried_names
+                ]
+            )
             if not remaining:
+                if provider_timed_out:
+                    request.state.metric_outcome = "provider_timeout"
+                    raise ProviderTimeoutError(
+                        "Provider 调用超过网关时间预算"
+                    ) from exc
                 request.state.metric_outcome = "provider_error"
                 raise HTTPException(
                     status_code=502,
@@ -385,6 +479,11 @@ async def _call_non_stream(
                     remaining, messages, req, required_capabilities
                 )
             except HTTPException as route_error:
+                if provider_timed_out:
+                    request.state.metric_outcome = "provider_timeout"
+                    raise ProviderTimeoutError(
+                        "Provider 调用超过网关时间预算"
+                    ) from exc
                 request.state.metric_outcome = "provider_error"
                 raise HTTPException(
                     status_code=502,
@@ -394,6 +493,7 @@ async def _call_non_stream(
                 f"{reason}；{chosen['name']} 失败，自动切换到 "
                 f"{fallback['name']}（{fallback_reason}）"
             )
+            record_failover(chosen["name"], fallback["name"])
             chosen = fallback
 
 
@@ -408,6 +508,7 @@ async def _stream_response(
     reason: str,
     required_capabilities: set[str],
     started: float,
+    deadline: float,
 ):
     tried_names: list[str] = []
     while True:
@@ -415,20 +516,56 @@ async def _stream_response(
         provider_started = time.perf_counter()
         try:
             opened = await open_provider_stream_with_resilience(
-                chosen, payload, BREAKER
+                chosen,
+                payload,
+                BREAKER,
+                timeout_s=RELIABILITY.stream_idle_timeout_seconds,
+                max_retries=RELIABILITY.max_retries,
+                base_delay_s=RELIABILITY.retry_base_delay_seconds,
+                max_backoff_s=RELIABILITY.retry_max_backoff_seconds,
+                deadline=deadline,
             )
             break
         except Exception as exc:
-            record_provider(chosen["name"], "error", time.perf_counter() - provider_started)
+            budget_exhausted = _request_budget_exhausted(exc, deadline)
+            provider_timed_out = budget_exhausted or _provider_timed_out(exc)
+            provider_outcome = "timeout" if provider_timed_out else "error"
+            record_provider(
+                chosen["name"],
+                provider_outcome,
+                time.perf_counter() - provider_started,
+            )
             log.info(
                 '{"request_id":"%s","event":"stream_open_error","provider":"%s","error_type":"%s"}',
                 request_id,
                 chosen["name"],
                 type(exc).__name__,
             )
-            remaining = [provider for provider in PROVIDERS if provider["name"] not in tried_names]
+            if budget_exhausted:
+                request.state.metric_outcome = "provider_timeout"
+                record_budget_exhausted("stream_start")
+                record_stream("timeout")
+                raise ProviderTimeoutError(
+                    "Provider 流式响应启动超过网关时间预算"
+                ) from exc
+            remaining = (
+                []
+                if req.model != "auto"
+                else [
+                    provider
+                    for provider in PROVIDERS
+                    if provider["name"] not in tried_names
+                ]
+            )
             if not remaining:
+                if provider_timed_out:
+                    request.state.metric_outcome = "provider_timeout"
+                    record_stream("timeout")
+                    raise ProviderTimeoutError(
+                        "Provider 流式响应启动超过网关时间预算"
+                    ) from exc
                 request.state.metric_outcome = "provider_error"
+                record_stream("open_error")
                 raise HTTPException(
                     status_code=502,
                     detail=f"所有 Provider 均不可用，最后失败: {type(exc).__name__}",
@@ -438,7 +575,14 @@ async def _stream_response(
                     remaining, messages, req, required_capabilities
                 )
             except HTTPException as route_error:
+                if provider_timed_out:
+                    request.state.metric_outcome = "provider_timeout"
+                    record_stream("timeout")
+                    raise ProviderTimeoutError(
+                        "Provider 流式响应启动超过网关时间预算"
+                    ) from exc
                 request.state.metric_outcome = "provider_error"
+                record_stream("open_error")
                 raise HTTPException(
                     status_code=502,
                     detail=f"所有 Provider 均不可用，最后失败: {type(exc).__name__}",
@@ -447,6 +591,7 @@ async def _stream_response(
                 f"{reason}；{chosen['name']} 失败，自动切换到 "
                 f"{fallback['name']}（{fallback_reason}）"
             )
+            record_failover(chosen["name"], fallback["name"])
             chosen = fallback
 
     request.state.defer_metrics_to_stream = True
@@ -502,6 +647,7 @@ async def _stream_response(
                     cost,
                 )
             record_request(outcome, time.perf_counter() - started)
+            record_stream(outcome)
             log.info(
                 '{"request_id":"%s","event":"stream_finished","provider":"%s","outcome":"%s","reason":%s}',
                 request_id,

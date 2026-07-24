@@ -50,6 +50,26 @@ CIRCUIT_STATE = Gauge(
     ["provider", "state"],
 )
 CIRCUIT_STATES = ("closed", "open", "half_open")
+PROVIDER_RETRIES = Counter(
+    "polygate_provider_retries_total",
+    "Provider retries performed before a terminal result.",
+    ["provider", "reason"],
+)
+FAILOVERS = Counter(
+    "polygate_failovers_total",
+    "Automatic provider failovers performed before downstream output.",
+    ["from_provider", "to_provider"],
+)
+STREAMS = Counter(
+    "polygate_streams_total",
+    "Streaming chat requests by terminal outcome.",
+    ["outcome"],
+)
+REQUEST_BUDGET_EXHAUSTED = Counter(
+    "polygate_request_budget_exhausted_total",
+    "Gateway request budgets exhausted before a provider result.",
+    ["phase"],
+)
 
 
 def record_request(outcome: str, duration_seconds: float) -> None:
@@ -68,6 +88,25 @@ def record_provider(
 ) -> None:
     PROVIDER_REQUESTS.labels(provider=provider, outcome=outcome).inc()
     PROVIDER_DURATION.labels(provider=provider, outcome=outcome).observe(duration_seconds)
+
+
+def record_provider_retry(provider: str, reason: str) -> None:
+    PROVIDER_RETRIES.labels(provider=provider, reason=reason).inc()
+
+
+def record_failover(from_provider: str, to_provider: str) -> None:
+    FAILOVERS.labels(
+        from_provider=from_provider,
+        to_provider=to_provider,
+    ).inc()
+
+
+def record_stream(outcome: str) -> None:
+    STREAMS.labels(outcome=outcome).inc()
+
+
+def record_budget_exhausted(phase: str) -> None:
+    REQUEST_BUDGET_EXHAUSTED.labels(phase=phase).inc()
 
 
 def record_usage(

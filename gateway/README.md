@@ -20,6 +20,8 @@ Gateway 在 `GET /metrics` 暴露 Prometheus 文本格式的运行指标。它�
 - 每个聊天请求的结果与端到端耗时，包括 400/403/422 客户端错误
 - 缓存命中/未命中
 - 各 Provider 的调用结果与耗时
+- Provider 重试原因、自动 failover 和熔断状态
+- 流式请求最终结果与请求预算耗尽阶段
 - 成功调用消耗的输入/输出 token
 - 成功调用的估算费用
 
@@ -31,10 +33,12 @@ curl http://localhost:8000/metrics
 
 每个 `POST /v1/chat/completions` 只计数一次。请求结果包括
 `success`、`cache_hit`、`client_error`、`routing_error`、
-`provider_error`、`cancelled`、`partial_error` 和未预期的 `server_error`。
+`provider_error`、`provider_timeout`、`cancelled`、`partial_error` 和未预期的
+`server_error`。
 Provider 调用额外区分 `success`、`error` 和客户端主动触发的 `cancelled`，
 避免取消请求降低 Provider 成功率。`polygate_circuit_state{provider,state}`
-以 `closed`、`open`、`half_open` one-hot Gauge 暴露熔断状态。指标标签只包含 Provider
+以 `closed`、`open`、`half_open` one-hot Gauge 暴露熔断状态。重试原因使用
+`timeout`、`429`、`5xx`、`transport`、`other` 固定枚举。指标标签只包含 Provider
 和这些有限的结果类型；`request_id`、prompt、路由原因和原始错误文本
 继续写入日志，不进入指标标签。
 
@@ -77,6 +81,30 @@ POLYGATE_API_KEYS=local-development docker compose up --build gateway
 usage，但只在客户端设置 `stream_options.include_usage=true` 时向下游透传
 usage-only chunk。
 
+### Agent 调用可靠性
+
+- 自动路由请求共享一个总时间预算，重试和 Provider failover 都不能越过它；
+  非流式默认 30 秒，流式默认在 30 秒内拿到首个有效 SSE event。
+- 单次非流式调用默认超时 10 秒；流式连接建立后默认允许 90 秒的上游空闲间隔。
+- 暂时性网络错误、408/409/429 和 5xx 默认最多重试两次，使用指数退避和 jitter；
+  `Retry-After` 会优先于本地退避，但不能突破总时间预算。
+- 只有 `model=auto` 会在首字节前 failover。显式指定 Provider 时会坚持该
+  Provider，避免 Agent 在不知情的情况下改变模型或执行位置。
+- 每个 Chat 响应（包括鉴权、校验、Provider 错误和 504）都返回
+  `X-PolyGate-Request-ID`。预算耗尽返回稳定的 `provider_timeout` 错误码。
+
+服务端可通过以下环境变量调整策略；非法或非有限值会让进程启动失败：
+
+| 环境变量 | 默认值 | 含义 |
+|---|---:|---|
+| `PROVIDER_TIMEOUT_SECONDS` | `10` | 单次非流式 Provider 调用上限 |
+| `PROVIDER_STREAM_IDLE_TIMEOUT_SECONDS` | `90` | 流式上游空闲超时 |
+| `GATEWAY_NON_STREAM_BUDGET_SECONDS` | `30` | 非流式重试与 failover 总预算 |
+| `GATEWAY_STREAM_START_BUDGET_SECONDS` | `30` | 流式首个有效 event 总预算 |
+| `PROVIDER_MAX_RETRIES` | `2` | 每个 Provider 的最大重试次数，范围 0–10 |
+| `PROVIDER_RETRY_BASE_DELAY_SECONDS` | `0.2` | 指数退避基准时间 |
+| `PROVIDER_RETRY_MAX_BACKOFF_SECONDS` | `5` | 本地退避上限，不截短 `Retry-After` |
+
 远程 Pi 通过 Web/Nginx 公网入口使用 `https://<host>/v1`；该位置关闭
 响应/请求缓冲并保留 Authorization。生产环境必须配置非默认客户端 Key。
 
@@ -93,6 +121,7 @@ usage-only chunk。
 - 卡片包含 chosen_provider / reason / cache_hit / cost / latency / tokens / request_id
 - 改约束（quality/privacy/max_cost）能看到路由结果和 reason 相应变化
 
-## 留给 P1 的 TODO（别在 P0 做）
-- main.py 里 provider 调用失败处 → 加重试 + 熔断 + failover（B 主导）
-- HEALTH 静态表 → 换成 B 的实时健康探测
+## P1 可靠性状态
+
+实时健康探测、重试、熔断、首字节前 failover、请求预算和 Redis 重连均已接入
+主链路。跨副本共享熔断状态仍未实现；当前每个 Gateway Pod 独立维护熔断器。
