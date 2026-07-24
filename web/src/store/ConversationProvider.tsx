@@ -9,7 +9,11 @@ import {
   useState,
   type PropsWithChildren,
 } from "react";
-import { GatewayClientError, gatewayHealth, requestCompletion } from "../api/gateway-client";
+import {
+  GatewayClientError,
+  gatewayHealth,
+  requestStreamingCompletion,
+} from "../api/gateway-client";
 import {
   createConversation,
   newId,
@@ -53,6 +57,8 @@ function gatewayPayload(settings: RoutingSettings, messages: ChatMessage[]): Gat
   return {
     model: settings.model,
     messages: messagesForGateway(messages),
+    stream: true,
+    stream_options: { include_usage: true },
     polygate: {
       quality: settings.quality,
       privacy: settings.privacy,
@@ -73,7 +79,10 @@ export function ConversationProvider({ children }: PropsWithChildren) {
   }, [state]);
 
   useEffect(() => {
-    if (state.hydrated) persistState(state);
+    const hasActiveStream = state.conversations.some((conversation) =>
+      conversation.messages.some((message) => message.status === "sending"),
+    );
+    if (state.hydrated && !hasActiveStream) persistState(state);
   }, [state]);
 
   useEffect(() => {
@@ -114,13 +123,23 @@ export function ConversationProvider({ children }: PropsWithChildren) {
       const controller = new AbortController();
       controllers.current.set(assistantMessageId, controller);
       try {
-        const response = await requestCompletion(gatewayPayload(settings, requestMessages), controller.signal);
+        const response = await requestStreamingCompletion(
+          gatewayPayload(settings, requestMessages),
+          controller.signal,
+          (delta) => dispatch({
+            type: "APPEND_RESPONSE_DELTA",
+            conversationId,
+            messageId: assistantMessageId,
+            delta,
+          }),
+        );
         dispatch({
           type: "COMPLETE_REQUEST",
           conversationId,
           messageId: assistantMessageId,
           content: response.answer,
           decisionCard: response.decisionCard,
+          warning: response.warning,
         });
         setGatewayOnline(true);
       } catch (error) {

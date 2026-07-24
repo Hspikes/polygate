@@ -27,6 +27,12 @@ export interface DecisionCardData {
   retries: number;
   failoverFrom: string | null;
   requestId: string;
+  outcome?: "success" | "cache_hit" | "cancelled" | "partial_error";
+  initialProvider?: string;
+  failoverCount?: number;
+  stream?: boolean;
+  createdAt?: string;
+  expiresAt?: string;
 }
 
 export interface MessageError {
@@ -39,6 +45,8 @@ export interface MessageError {
     | "budget"
     | "rate_limit"
     | "validation"
+    | "partial"
+    | "decision"
     | "unknown";
   message: string;
   status?: number;
@@ -54,6 +62,7 @@ export interface ChatMessage {
   requestSettings?: RoutingSettings;
   decisionCard?: DecisionCardData;
   error?: MessageError;
+  warning?: MessageError;
   parentUserMessageId?: string;
 }
 
