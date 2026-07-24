@@ -1,0 +1,98 @@
+{
+  "draft": {
+    "schema_version": 1,
+    "gateway": {
+      "assumed_output_tokens": 256,
+      "balanced_price_tolerance": 0.2,
+      "budget_mode": "soft",
+      "latency_mode": "soft",
+      "high_quality_strategy": "prefer_real"
+    },
+    "automation": {
+      "urgency_scores": {
+        "critical": 100,
+        "high": 60,
+        "normal": 30,
+        "low": 10
+      },
+      "scenarios": {
+        "production_incident": {
+          "weight": 40,
+          "defaults": { "quality": "high", "privacy": "high", "max_cost_usd": 0.01, "latency_target_ms": 1000 }
+        },
+        "customer_escalation": {
+          "weight": 25,
+          "defaults": { "quality": "balanced", "privacy": "standard", "max_cost_usd": 0.01, "latency_target_ms": 1500 }
+        },
+        "finance_summary": {
+          "weight": 15,
+          "defaults": { "quality": "balanced", "privacy": "high", "max_cost_usd": 0.005, "latency_target_ms": 3000 }
+        },
+        "marketing_batch": {
+          "weight": 0,
+          "defaults": { "quality": "cheap", "privacy": "standard", "max_cost_usd": 0.002, "latency_target_ms": 5000 }
+        }
+      },
+      "queue": {
+        "waiting_bonus_interval_seconds": 5,
+        "waiting_bonus_points": 1,
+        "waiting_bonus_cap": 30,
+        "starvation_streak_threshold": 3,
+        "starvation_wait_seconds": 20
+      }
+    }
+  },
+  "stored_version": {
+    "version": 4,
+    "status": "active",
+    "created_at": "2026-07-24T10:30:00Z",
+    "created_by": "policy-admin",
+    "change_note": "Increase balanced tolerance for support cases",
+    "rollback_from": null,
+    "policy": {
+      "schema_version": 1,
+      "gateway": {
+        "assumed_output_tokens": 256,
+        "balanced_price_tolerance": 0.35,
+        "budget_mode": "soft",
+        "latency_mode": "soft",
+        "high_quality_strategy": "prefer_real"
+      },
+      "automation": {
+        "urgency_scores": { "critical": 100, "high": 60, "normal": 30, "low": 10 },
+        "scenarios": {
+          "production_incident": { "weight": 40, "defaults": { "quality": "high", "privacy": "high", "max_cost_usd": 0.01, "latency_target_ms": 1000 } },
+          "customer_escalation": { "weight": 25, "defaults": { "quality": "balanced", "privacy": "standard", "max_cost_usd": 0.01, "latency_target_ms": 1500 } },
+          "finance_summary": { "weight": 15, "defaults": { "quality": "balanced", "privacy": "high", "max_cost_usd": 0.005, "latency_target_ms": 3000 } },
+          "marketing_batch": { "weight": 0, "defaults": { "quality": "cheap", "privacy": "standard", "max_cost_usd": 0.002, "latency_target_ms": 5000 } }
+        },
+        "queue": { "waiting_bonus_interval_seconds": 5, "waiting_bonus_points": 1, "waiting_bonus_cap": 30, "starvation_streak_threshold": 3, "starvation_wait_seconds": 20 }
+      }
+    }
+  },
+  "active_response": {
+    "version": 4,
+    "schema_version": 1,
+    "published_at": "2026-07-24T10:30:00Z",
+    "policy": {
+      "schema_version": 1,
+      "gateway": {
+        "assumed_output_tokens": 256,
+        "balanced_price_tolerance": 0.35,
+        "budget_mode": "soft",
+        "latency_mode": "soft",
+        "high_quality_strategy": "prefer_real"
+      },
+      "automation": {
+        "urgency_scores": { "critical": 100, "high": 60, "normal": 30, "low": 10 },
+        "scenarios": {
+          "production_incident": { "weight": 40, "defaults": { "quality": "high", "privacy": "high", "max_cost_usd": 0.01, "latency_target_ms": 1000 } },
+          "customer_escalation": { "weight": 25, "defaults": { "quality": "balanced", "privacy": "standard", "max_cost_usd": 0.01, "latency_target_ms": 1500 } },
+          "finance_summary": { "weight": 15, "defaults": { "quality": "balanced", "privacy": "high", "max_cost_usd": 0.005, "latency_target_ms": 3000 } },
+          "marketing_batch": { "weight": 0, "defaults": { "quality": "cheap", "privacy": "standard", "max_cost_usd": 0.002, "latency_target_ms": 5000 } }
+        },
+        "queue": { "waiting_bonus_interval_seconds": 5, "waiting_bonus_points": 1, "waiting_bonus_cap": 30, "starvation_streak_threshold": 3, "starvation_wait_seconds": 20 }
+      }
+    }
+  }
+}

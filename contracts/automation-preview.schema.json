@@ -63,6 +63,7 @@
     "policy_adjustments": {
       "type": "array",
       "items": { "type": "string" }
-    }
+    },
+    "policy_version": { "type": "integer", "minimum": 1 }
   }
 }
