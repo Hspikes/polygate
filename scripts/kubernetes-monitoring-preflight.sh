@@ -33,6 +33,9 @@ require_command python3
 
 echo "PolyGate Kubernetes monitoring preflight"
 
+bash "$ROOT_DIR/scripts/tests/test-deployment-secrets.sh"
+ok "Application deployment validates required Secret keys before mutation"
+
 kubectl kustomize "$MANIFEST_DIR" >/dev/null
 ok "Kustomize renders the monitoring resources without a cluster"
 

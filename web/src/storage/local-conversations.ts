@@ -22,6 +22,31 @@ const decisionCardSchema = z.object({
   retries: z.number().int().nonnegative(),
   failoverFrom: z.string().nullable(),
   requestId: z.string(),
+  outcome: z.enum(["success", "cache_hit", "cancelled", "partial_error"]).optional(),
+  initialProvider: z.string().optional(),
+  failoverCount: z.number().int().nonnegative().optional(),
+  stream: z.boolean().optional(),
+  createdAt: z.string().optional(),
+  expiresAt: z.string().optional(),
+});
+
+const messageErrorSchema = z.object({
+  kind: z.enum([
+    "auth",
+    "network",
+    "routing",
+    "provider",
+    "timeout",
+    "budget",
+    "rate_limit",
+    "validation",
+    "partial",
+    "decision",
+    "unknown",
+  ]),
+  message: z.string(),
+  status: z.number().int().optional(),
+  requestId: z.string().optional(),
 });
 
 const messageSchema = z.object({
@@ -32,24 +57,8 @@ const messageSchema = z.object({
   status: z.enum(["sending", "complete", "error", "cancelled"]),
   requestSettings: settingsSchema.optional(),
   decisionCard: decisionCardSchema.optional(),
-  error: z
-    .object({
-      kind: z.enum([
-        "auth",
-        "network",
-        "routing",
-        "provider",
-        "timeout",
-        "budget",
-        "rate_limit",
-        "validation",
-        "unknown",
-      ]),
-      message: z.string(),
-      status: z.number().int().optional(),
-      requestId: z.string().optional(),
-    })
-    .optional(),
+  error: messageErrorSchema.optional(),
+  warning: messageErrorSchema.optional(),
   parentUserMessageId: z.string().optional(),
 });
 

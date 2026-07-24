@@ -86,7 +86,7 @@ usage-only chunk。
 - 自动路由请求共享一个总时间预算，重试和 Provider failover 都不能越过它；
   非流式默认 30 秒，流式默认在 30 秒内拿到首个有效 SSE event。
 - 单次非流式调用默认超时 10 秒；流式连接建立后默认允许 90 秒的上游空闲间隔。
-- 暂时性网络错误、408/409/429 和 5xx 默认最多重试两次，使用指数退避和 jitter；
+- 暂时性网络错误、408/409/429 和 5xx 默认最多重试四次，使用指数退避和 jitter；
   `Retry-After` 会优先于本地退避，但不能突破总时间预算。
 - 只有 `model=auto` 会在首字节前 failover。显式指定 Provider 时会坚持该
   Provider，避免 Agent 在不知情的情况下改变模型或执行位置。
@@ -101,8 +101,8 @@ usage-only chunk。
 | `PROVIDER_STREAM_IDLE_TIMEOUT_SECONDS` | `90` | 流式上游空闲超时 |
 | `GATEWAY_NON_STREAM_BUDGET_SECONDS` | `30` | 非流式重试与 failover 总预算 |
 | `GATEWAY_STREAM_START_BUDGET_SECONDS` | `30` | 流式首个有效 event 总预算 |
-| `PROVIDER_MAX_RETRIES` | `2` | 每个 Provider 的最大重试次数，范围 0–10 |
-| `PROVIDER_RETRY_BASE_DELAY_SECONDS` | `0.2` | 指数退避基准时间 |
+| `PROVIDER_MAX_RETRIES` | `4` | 每个 Provider 的最大重试次数，范围 0–10 |
+| `PROVIDER_RETRY_BASE_DELAY_SECONDS` | `0.5` | 指数退避基准时间 |
 | `PROVIDER_RETRY_MAX_BACKOFF_SECONDS` | `5` | 本地退避上限，不截短 `Retry-After` |
 | `DECISION_RECORD_TTL_SECONDS` | `3600` | Redis 中脱敏 Decision Record 的保留秒数（60–86400） |
 

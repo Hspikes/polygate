@@ -57,6 +57,9 @@ export function DecisionCard({ card, settings }: { card: DecisionCardData; setti
             <span>请求 <code>{card.requestId}</code></span>
             <span>{settings ? `${qualityLabel[settings.quality]} · ${privacyLabel[settings.privacy]} · ${settings.latencyTargetMs.toLocaleString()} ms` : ""}</span>
             {card.failoverFrom && <span>故障转移自 {card.failoverFrom}</span>}
+            {card.failoverCount !== undefined && card.failoverCount > 1 && (
+              <span>共故障转移 {card.failoverCount} 次</span>
+            )}
             <span>重试 {card.retries} 次</span>
           </div>
         </div>

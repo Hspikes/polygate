@@ -66,19 +66,33 @@ Worker:          python -m automation.app.worker
 继续使用 `/health`，readiness 改用真正检查 Redis 的 `/ready`。Worker 不创建
 Service；Kubernetes 探针和 Prometheus 直接访问 Pod 的 `9000` 端口。
 
-Gateway 认证仍为 opt-in。启用认证时，让 Gateway 接受的 key 与 Worker 使用的
-key 保持一致，并把两个值放进同一个 Secret：
+Gateway 代码在本地仍允许 opt-in 认证，但 Kubernetes 部署要求启用认证，且 Web
+Deployment 需要一个独立的服务端身份。为避免 Web 和 Worker 分别更新同一个
+Secret 时互相覆盖，部署前一次性创建完整的 `gateway-client-secrets`。
+`api-keys` 是 Gateway 接受的 key 列表，
+`web-api-key` 和 `worker-api-key` 分别只注入对应客户端：
 
 ```bash
-read -s POLYGATE_WORKER_KEY
+read -s WEB_GATEWAY_KEY
+printf "\n"
+read -s WORKER_GATEWAY_KEY
+printf "\n"
+
 kubectl create secret generic gateway-client-secrets \
-  --from-literal=api-keys="$POLYGATE_WORKER_KEY" \
-  --from-literal=worker-api-key="$POLYGATE_WORKER_KEY" \
+  --namespace default \
+  --from-literal=api-keys="$WEB_GATEWAY_KEY,$WORKER_GATEWAY_KEY" \
+  --from-literal=web-api-key="$WEB_GATEWAY_KEY" \
+  --from-literal=worker-api-key="$WORKER_GATEWAY_KEY" \
   --dry-run=client \
   --output=yaml \
   | kubectl apply --filename=-
-unset POLYGATE_WORKER_KEY
+
+unset WEB_GATEWAY_KEY WORKER_GATEWAY_KEY
 ```
+
+如需为 CLI 或 Pi 增加独立身份，把对应 key 追加到 `api-keys` 的逗号分隔列表，
+不要复用 Web 或 Worker 身份。部署脚本只检查 key 名，不会输出 Secret 内容；
+Secret 或必需 key 缺失时会在任何应用资源更新前退出。
 
 部署时仍显式开启 Automation：
 
@@ -131,13 +145,18 @@ IMAGE_TAG=<刚才输出的提交号> ./scripts/deploy-kubernetes-application.sh
   `./scripts/kubernetes-monitoring-preflight.sh`。详细说明见
   [`monitoring/README.md`](./monitoring/README.md)。
 - **真实 Provider key 用 Secret**：`kubectl create secret generic provider-secrets --from-literal=real-a-key=xxx`，绝不写进清单。
-- **Gateway 客户端 key 也用 Secret**：Web 使用独立身份，CLI 使用个人身份。创建
-  `gateway-client-secrets` 时，`api-keys` 必须同时包含两者，`web-api-key` 只保存 Web
-  身份，例如：`kubectl create secret generic gateway-client-secrets --from-literal=api-keys='<cli-key>,<web-key>' --from-literal=web-api-key='<web-key>'`。
+- **Gateway 客户端 key 也用 Secret**：Web、Worker、CLI 使用不同身份。
+  `gateway-client-secrets` 的完整创建命令见上面的“C2 Automation Worker 接线”；
+  不要用只包含部分 key 的命令覆盖已有 Secret。
   Web Key 仅由 Nginx 运行时读取；不要使用 `VITE_` 前缀，也不要写入镜像、JavaScript
   或日志。公网开放 `/v1` 前必须创建该 Secret。
 
 ## Web 入口验证
+
+Web Pod 的 readiness/liveness 只检查 `/healthz`，用于判断非特权 Nginx 和静态页面
+是否可服务；它不会因 Gateway 短暂故障而从 Service endpoints 中移除。浏览器在线
+状态和下方 smoke test 会另外调用鉴权后的 `/api/v1/models`。Web 根文件系统保持
+只读，运行时模板只写入挂载在 `/etc/nginx/conf.d` 的 `emptyDir`。
 
 ```bash
 kubectl get service web
