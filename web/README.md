@@ -63,5 +63,8 @@ request ID 的提示。
 ## 生产镜像
 
 `Dockerfile` 使用 Node 构建静态资源，再交给非特权 Nginx 镜像运行。运行时只监听
-8080，提供 `/healthz`、SPA fallback、安全响应头和非流式 `/api` 代理。容器健康检查
-使用 `/api/v1/models`，因此内部 Web Key 缺失或失效时不会显示为可用。
+8080，提供 `/healthz`、SPA fallback、安全响应头和无缓冲 `/api` 流式代理。容器和
+Kubernetes 探针只用 `/healthz` 判断 Nginx 自身是否可用；浏览器在线状态和 Web smoke
+继续通过 `/api/v1/models` 判断 Gateway 与内部 Web Key 是否真正就绪。Kubernetes 在
+保持 `readOnlyRootFilesystem=true` 的同时，仅为 Nginx 运行时生成配置所需的
+`/etc/nginx/conf.d` 挂载受限 `emptyDir`。
