@@ -118,6 +118,10 @@
 .request-error { border-color: #e5b8b3; background: var(--danger-soft); box-shadow: none; }
 .request-error .request-feedback-copy strong { color: #81332e; }
 .request-error .request-feedback-copy span { color: #8b4a45; }
+.request-error-trace { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 4px; }
+.request-error-trace code { color: #6f3935; font: 600 .68rem var(--font-mono); overflow-wrap: anywhere; }
+.request-error-trace button { padding: 2px 6px; border: 1px solid rgb(129 51 46 / 22%); border-radius: 6px; color: #81332e; background: rgb(255 255 255 / 48%); cursor: pointer; font-size: .64rem; }
+.request-error-trace button:hover { background: rgb(255 255 255 / 78%); }
 .request-cancelled { min-height: 64px; background: rgb(241 238 232 / 62%); box-shadow: none; }
 @keyframes route-scan { from { transform: translateX(-110%); } to { transform: translateX(390%); } }
 .response-card { position: relative; border: 1px solid #d8d2c8; border-radius: 14px; background: rgb(255 253 249 / 96%); box-shadow: 0 10px 30px rgb(53 45 34 / 6%); overflow: hidden; animation: response-enter .28s var(--ease-out) both; }

@@ -131,7 +131,11 @@ IMAGE_TAG=<刚才输出的提交号> ./scripts/deploy-kubernetes-application.sh
   `./scripts/kubernetes-monitoring-preflight.sh`。详细说明见
   [`monitoring/README.md`](./monitoring/README.md)。
 - **真实 Provider key 用 Secret**：`kubectl create secret generic provider-secrets --from-literal=real-a-key=xxx`，绝不写进清单。
-- **Agent 客户端 key 也用 Secret**：`kubectl create secret generic gateway-client-secrets --from-literal=api-keys='<long-random-key>'`。多个过渡期 key 可用英文逗号分隔；公网开放 `/v1` 前必须创建该 Secret。
+- **Gateway 客户端 key 也用 Secret**：Web 使用独立身份，CLI 使用个人身份。创建
+  `gateway-client-secrets` 时，`api-keys` 必须同时包含两者，`web-api-key` 只保存 Web
+  身份，例如：`kubectl create secret generic gateway-client-secrets --from-literal=api-keys='<cli-key>,<web-key>' --from-literal=web-api-key='<web-key>'`。
+  Web Key 仅由 Nginx 运行时读取；不要使用 `VITE_` 前缀，也不要写入镜像、JavaScript
+  或日志。公网开放 `/v1` 前必须创建该 Secret。
 
 ## Web 入口验证
 

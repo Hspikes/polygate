@@ -34,9 +34,20 @@ const messageSchema = z.object({
   decisionCard: decisionCardSchema.optional(),
   error: z
     .object({
-      kind: z.enum(["network", "routing", "provider", "budget", "validation", "unknown"]),
+      kind: z.enum([
+        "auth",
+        "network",
+        "routing",
+        "provider",
+        "timeout",
+        "budget",
+        "rate_limit",
+        "validation",
+        "unknown",
+      ]),
       message: z.string(),
       status: z.number().int().optional(),
+      requestId: z.string().optional(),
     })
     .optional(),
   parentUserMessageId: z.string().optional(),

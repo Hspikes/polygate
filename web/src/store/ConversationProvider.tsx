@@ -137,7 +137,10 @@ export function ConversationProvider({ children }: PropsWithChildren) {
               ? error.details
               : { kind: "unknown", message: "请求失败，请稍后重试。" },
         });
-        if (error instanceof GatewayClientError && error.details.kind === "network") setGatewayOnline(false);
+        if (
+          error instanceof GatewayClientError
+          && ["auth", "network"].includes(error.details.kind)
+        ) setGatewayOnline(false);
       } finally {
         controllers.current.delete(assistantMessageId);
       }

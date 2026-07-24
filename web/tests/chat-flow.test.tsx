@@ -23,7 +23,7 @@ describe("chat flow", () => {
     let turn = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/health") return new Response('{"status":"ok"}', { status: 200 });
+      if (url === "/api/v1/models") return new Response('{"object":"list","data":[]}', { status: 200 });
       if (url === "/api/v1/chat/completions") {
         turn += 1;
         return new Response(JSON.stringify(responseBody(`answer ${turn}`)), {
@@ -149,10 +149,13 @@ describe("chat flow", () => {
   it("surfaces provider errors and retries without duplicating the user message", async () => {
     let attempts = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input) === "/api/health") return new Response("{}", { status: 200 });
+      if (String(input) === "/api/v1/models") return new Response("{}", { status: 200 });
       attempts += 1;
       if (attempts === 1) {
-        return new Response('{"detail":"provider mock-a failed"}', { status: 502 });
+        return new Response('{"detail":"provider mock-a failed"}', {
+          status: 502,
+          headers: { "X-PolyGate-Request-ID": "req-provider-failure" },
+        });
       }
       return new Response(JSON.stringify(responseBody("recovered")), {
         status: 200,
@@ -160,9 +163,13 @@ describe("chat flow", () => {
       });
     }));
     const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
     const { container } = render(<App />);
     await user.type(await screen.findByRole("textbox", { name: "消息内容" }), "retry me{enter}");
     expect(await screen.findByText("模型服务错误")).toBeInTheDocument();
+    expect(screen.getByText("req-provider-failure")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "复制 request ID" }));
+    expect(writeText).toHaveBeenCalledWith("req-provider-failure");
     await user.click(screen.getByRole("button", { name: "重试" }));
     expect(await screen.findByText("recovered")).toBeInTheDocument();
     expect(container.querySelectorAll(".user-message .message-bubble")).toHaveLength(1);
@@ -171,7 +178,7 @@ describe("chat flow", () => {
 
   it("aborts an in-flight request and keeps it retryable", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input) === "/api/health") return Promise.resolve(new Response("{}", { status: 200 }));
+      if (String(input) === "/api/v1/models") return Promise.resolve(new Response("{}", { status: 200 }));
       return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
       });
@@ -186,7 +193,7 @@ describe("chat flow", () => {
 
   it("offers the local fixture only when the gateway is offline", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input) === "/api/health") return new Response("{}", { status: 503 });
+      if (String(input) === "/api/v1/models") return new Response("{}", { status: 401 });
       throw new Error(`unexpected fetch ${String(input)}`);
     }));
 
