@@ -24,11 +24,18 @@ export type ConversationAction =
     }
   | { type: "START_REQUEST"; conversationId: string; messageId: string; settings: RoutingSettings }
   | {
+      type: "APPEND_RESPONSE_DELTA";
+      conversationId: string;
+      messageId: string;
+      delta: string;
+    }
+  | {
       type: "COMPLETE_REQUEST";
       conversationId: string;
       messageId: string;
       content: string;
-      decisionCard: DecisionCardData;
+      decisionCard?: DecisionCardData;
+      warning?: MessageError;
     }
   | { type: "FAIL_REQUEST"; conversationId: string; messageId: string; error: MessageError }
   | { type: "CANCEL_REQUEST"; conversationId: string; messageId: string }
@@ -121,6 +128,14 @@ export function conversationReducer(
           requestSettings: { ...action.settings },
           decisionCard: undefined,
           error: undefined,
+          warning: undefined,
+        })),
+      );
+    case "APPEND_RESPONSE_DELTA":
+      return withConversation(state, action.conversationId, (conversation) =>
+        updateMessage(conversation, action.messageId, (message) => ({
+          ...message,
+          content: `${message.content}${action.delta}`,
         })),
       );
     case "COMPLETE_REQUEST":
@@ -131,6 +146,7 @@ export function conversationReducer(
           status: "complete",
           decisionCard: action.decisionCard,
           error: undefined,
+          warning: action.warning,
         })),
       );
     case "FAIL_REQUEST":

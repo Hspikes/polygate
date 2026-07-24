@@ -10,6 +10,10 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        # nginx-unprivileged runs as UID/GID 101. fsGroup makes only the
+        # runtime-generated configuration volume writable without relaxing
+        # the container's read-only root filesystem.
+        fsGroup: 101
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: web
@@ -25,12 +29,15 @@ spec:
           resources:
             requests: { cpu: "25m", memory: "32Mi" }
             limits: { cpu: "200m", memory: "128Mi" }
-          readinessProbe: { httpGet: { path: /api/v1/models, port: http }, initialDelaySeconds: 3, periodSeconds: 5 }
+          readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 3, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 10, periodSeconds: 10 }
           volumeMounts:
             - { name: nginx-tmp, mountPath: /tmp }
+            - { name: nginx-conf, mountPath: /etc/nginx/conf.d }
       volumes:
         - name: nginx-tmp
+          emptyDir: {}
+        - name: nginx-conf
           emptyDir: {}
 ---
 apiVersion: v1

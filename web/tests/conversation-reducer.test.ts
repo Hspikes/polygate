@@ -135,4 +135,45 @@ describe("conversationReducer", () => {
     expect(state.conversations[0].messages[1].content).toBe("late answer");
     expect(state.conversations[1].messages).toHaveLength(0);
   });
+
+  it("appends stream deltas without completing the message", () => {
+    const conversation = { ...createConversation(), messages: [user(), assistant()] };
+    let state = stateWith(conversation);
+    state = conversationReducer(state, {
+      type: "APPEND_RESPONSE_DELTA",
+      conversationId: conversation.id,
+      messageId: "assistant-1",
+      delta: "first ",
+    });
+    state = conversationReducer(state, {
+      type: "APPEND_RESPONSE_DELTA",
+      conversationId: conversation.id,
+      messageId: "assistant-1",
+      delta: "second",
+    });
+
+    expect(state.conversations[0].messages[1]).toMatchObject({
+      content: "first second",
+      status: "sending",
+    });
+  });
+
+  it("preserves partial streamed content when the request fails", () => {
+    const conversation = {
+      ...createConversation(),
+      messages: [user(), { ...assistant(), content: "partial answer" }],
+    };
+    const state = conversationReducer(stateWith(conversation), {
+      type: "FAIL_REQUEST",
+      conversationId: conversation.id,
+      messageId: "assistant-1",
+      error: { kind: "partial", message: "回答不完整" },
+    });
+
+    expect(state.conversations[0].messages[1]).toMatchObject({
+      content: "partial answer",
+      status: "error",
+      error: { kind: "partial" },
+    });
+  });
 });

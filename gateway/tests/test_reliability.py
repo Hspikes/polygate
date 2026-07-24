@@ -51,6 +51,33 @@ def _status_error(status: int, **headers: str) -> httpx.HTTPStatusError:
 
 
 class RetryPolicyTests(unittest.TestCase):
+    def test_default_policy_waits_through_a_brief_503_overload(self):
+        provider = {"name": "overloaded"}
+        result = AdapterResult(
+            {"choices": [{"message": {"content": "ok"}}], "usage": {}}, 1
+        )
+        attempts = [_status_error(503) for _ in range(4)] + [result]
+        delays: list[float] = []
+
+        def provider_call(*_args, **_kwargs):
+            value = attempts.pop(0)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        with patch("app.retry.random.uniform", return_value=0):
+            returned = call_provider_with_resilience(
+                provider,
+                {},
+                CircuitBreakerRegistry(),
+                provider_call=provider_call,
+                sleeper=delays.append,
+            )
+
+        self.assertIs(returned, result)
+        self.assertEqual(delays, [0.5, 1.0, 2.0, 4.0])
+        self.assertEqual(returned.retries, 4)
+
     def test_retry_after_is_honored_before_retrying_429(self):
         provider = {"name": "rate-limited"}
         result = AdapterResult(
@@ -375,6 +402,13 @@ class GatewayReliabilityTests(unittest.TestCase):
 
 
 class ResilienceSettingsTests(unittest.TestCase):
+    def test_defaults_allow_a_brief_provider_overload_to_recover(self):
+        with patch.dict(os.environ, {}, clear=True):
+            settings = ResilienceSettings.from_env()
+
+        self.assertEqual(settings.max_retries, 4)
+        self.assertEqual(settings.retry_base_delay_seconds, 0.5)
+
     def test_environment_overrides_are_validated(self):
         with patch.dict(
             os.environ,

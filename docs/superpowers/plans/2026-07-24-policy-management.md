@@ -272,7 +272,8 @@ to Preview and Job schemas and examples. Do not add it to each schema's `require
 
 - [ ] **Step 6: Document ownership and frozen metrics**
 
-Add contract rows 11–13 to `contracts/README.md` for:
+Add contract rows 12–14 to `contracts/README.md` for (Decision Record already
+owns contract row 11):
 
 ```text
 policy.schema.json

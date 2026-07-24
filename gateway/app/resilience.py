@@ -62,8 +62,11 @@ class ResilienceSettings:
     stream_idle_timeout_seconds: float = 90.0
     non_stream_budget_seconds: float = 30.0
     stream_start_budget_seconds: float = 30.0
-    max_retries: int = 2
-    retry_base_delay_seconds: float = 0.2
+    # A real provider can briefly return 503 while overloaded. Give it enough
+    # time to recover before falling back, while the request-level budget still
+    # provides the hard upper bound.
+    max_retries: int = 4
+    retry_base_delay_seconds: float = 0.5
     retry_max_backoff_seconds: float = 5.0
 
     @classmethod
@@ -81,9 +84,9 @@ class ResilienceSettings:
             stream_start_budget_seconds=_float_setting(
                 "GATEWAY_STREAM_START_BUDGET_SECONDS", 30.0
             ),
-            max_retries=_int_setting("PROVIDER_MAX_RETRIES", 2),
+            max_retries=_int_setting("PROVIDER_MAX_RETRIES", 4),
             retry_base_delay_seconds=_non_negative_float_setting(
-                "PROVIDER_RETRY_BASE_DELAY_SECONDS", 0.2
+                "PROVIDER_RETRY_BASE_DELAY_SECONDS", 0.5
             ),
             retry_max_backoff_seconds=_non_negative_float_setting(
                 "PROVIDER_RETRY_MAX_BACKOFF_SECONDS", 5.0
