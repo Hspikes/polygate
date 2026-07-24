@@ -24,4 +24,12 @@ describe("Nginx Web authentication boundary", () => {
       "proxy_set_header Authorization $http_authorization;",
     );
   });
+
+  it("keeps the authenticated /api proxy unbuffered for browser SSE", () => {
+    const api = locationBody("/api/");
+    expect(api).toContain("proxy_buffering off;");
+    expect(api).toContain("proxy_request_buffering off;");
+    expect(api).toContain("proxy_cache off;");
+    expect(api).toContain("add_header X-Accel-Buffering no always;");
+  });
 });

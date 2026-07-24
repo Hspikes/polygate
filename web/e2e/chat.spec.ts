@@ -2,24 +2,42 @@ import { expect, test } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
   let turn = 0;
+  const answers = new Map<string, string>();
   await page.route("**/api/v1/models", (route) => route.fulfill({ json: { object: "list", data: [] } }));
   await page.route("**/api/v1/chat/completions", async (route) => {
     turn += 1;
+    const requestId = `req_${turn.toString(16).padStart(32, "0")}`;
+    const answer = turn === 1 ? "First **Markdown** answer" : "Second answer";
+    answers.set(requestId, answer);
     await route.fulfill({
-      json: {
-        answer: turn === 1 ? "First **Markdown** answer" : "Second answer",
-        polygate: {
-          chosen_provider: "mock-a",
-          reason: "E2E route",
-          cache_hit: false,
-          cost_estimate_usd: 0.0001,
-          latency_ms: 12,
-          tokens: { input: 8, output: 3 },
-          retries: 0,
-          failover_from: null,
-          request_id: `req-${turn}`,
-        },
-      },
+      body: `data: ${JSON.stringify({ choices: [{ delta: { content: answer }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
+      contentType: "text/event-stream",
+      headers: { "X-PolyGate-Request-ID": requestId },
+    });
+  });
+  await page.route("**/api/v1/decisions/*", async (route) => {
+    const requestId = new URL(route.request().url()).pathname.split("/").at(-1)!;
+    const answer = answers.get(requestId);
+    await route.fulfill({
+      status: answer ? 200 : 404,
+      json: answer ? {
+        schema_version: 1,
+        request_id: requestId,
+        outcome: "success",
+        chosen_provider: "mock-a",
+        initial_provider: "mock-a",
+        reason: "E2E route",
+        cache_hit: false,
+        stream: true,
+        cost_estimate_usd: 0.0001,
+        latency_ms: 12,
+        tokens: { input: 8, output: 3 },
+        retries: 0,
+        failover_from: null,
+        failover_count: 0,
+        created_at: "2026-07-24T03:00:00Z",
+        expires_at: "2026-07-24T04:00:00Z",
+      } : { detail: "not found" },
     });
   });
 });

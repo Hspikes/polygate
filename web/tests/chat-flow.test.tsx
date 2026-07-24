@@ -1,35 +1,65 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
 
-const responseBody = (answer: string) => ({
-  answer,
-  polygate: {
-    chosen_provider: "mock-a",
-    reason: "test route",
-    cache_hit: false,
-    cost_estimate_usd: 0.0001,
-    latency_ms: 10,
-    tokens: { input: 5, output: 2 },
-    retries: 0,
-    failover_from: null,
-    request_id: `req-${answer}`,
-  },
+const requestIdFor = (turn: number) => `req_${turn.toString(16).padStart(32, "0")}`;
+
+const streamResponse = (answer: string, requestId: string) => {
+  const chunk = JSON.stringify({
+    choices: [{ delta: { content: answer }, finish_reason: "stop" }],
+  });
+  return new Response(`data: ${chunk}\n\ndata: [DONE]\n\n`, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "X-PolyGate-Request-ID": requestId,
+      "X-PolyGate-Provider": "mock-a",
+    },
+  });
+};
+
+const decisionResponse = (answer: string, requestId: string) => new Response(JSON.stringify({
+  schema_version: 1,
+  request_id: requestId,
+  outcome: "success",
+  chosen_provider: "mock-a",
+  initial_provider: "mock-a",
+  reason: "test route",
+  cache_hit: false,
+  stream: true,
+  cost_estimate_usd: 0.0001,
+  latency_ms: 10,
+  tokens: { input: 5, output: Math.max(1, answer.length) },
+  retries: 0,
+  failover_from: null,
+  failover_count: 0,
+  created_at: "2026-07-24T03:00:00Z",
+  expires_at: "2026-07-24T04:00:00Z",
+}), {
+  status: 200,
+  headers: { "Content-Type": "application/json" },
 });
 
 describe("chat flow", () => {
   beforeEach(() => {
     let turn = 0;
+    const answers = new Map<string, string>();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/v1/models") return new Response('{"object":"list","data":[]}', { status: 200 });
       if (url === "/api/v1/chat/completions") {
         turn += 1;
-        return new Response(JSON.stringify(responseBody(`answer ${turn}`)), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+        const requestId = requestIdFor(turn);
+        const answer = `answer ${turn}`;
+        answers.set(requestId, answer);
+        return streamResponse(answer, requestId);
+      }
+      if (url.startsWith("/api/v1/decisions/")) {
+        const requestId = url.split("/").at(-1)!;
+        const answer = answers.get(requestId);
+        if (!answer) return new Response('{"detail":"not found"}', { status: 404 });
+        return decisionResponse(answer, requestId);
       }
       throw new Error(`unexpected fetch ${url}`);
     }));
@@ -149,7 +179,11 @@ describe("chat flow", () => {
   it("surfaces provider errors and retries without duplicating the user message", async () => {
     let attempts = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input) === "/api/v1/models") return new Response("{}", { status: 200 });
+      const url = String(input);
+      if (url === "/api/v1/models") return new Response("{}", { status: 200 });
+      if (url.startsWith("/api/v1/decisions/")) {
+        return decisionResponse("recovered", requestIdFor(1));
+      }
       attempts += 1;
       if (attempts === 1) {
         return new Response('{"detail":"provider mock-a failed"}', {
@@ -157,10 +191,7 @@ describe("chat flow", () => {
           headers: { "X-PolyGate-Request-ID": "req-provider-failure" },
         });
       }
-      return new Response(JSON.stringify(responseBody("recovered")), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return streamResponse("recovered", requestIdFor(1));
     }));
     const user = userEvent.setup();
     const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
@@ -188,6 +219,85 @@ describe("chat flow", () => {
     await user.type(await screen.findByRole("textbox", { name: "消息内容" }), "cancel me{enter}");
     await user.click(await screen.findByRole("button", { name: "取消生成" }));
     expect(await screen.findByText("生成已停止")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+
+  it("renders deltas before DONE and persists only after the stream is stable", async () => {
+    const requestId = requestIdFor(99);
+    let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const storageWrite = vi.spyOn(Storage.prototype, "setItem");
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/models") return new Response("{}", { status: 200 });
+      if (url === "/api/v1/chat/completions") {
+        return new Response(new ReadableStream<Uint8Array>({
+          start(controller) {
+            streamController = controller;
+          },
+        }), {
+          status: 200,
+          headers: {
+            "Content-Type": "text/event-stream",
+            "X-PolyGate-Request-ID": requestId,
+          },
+        });
+      }
+      if (url === `/api/v1/decisions/${requestId}`) {
+        return decisionResponse("partial done", requestId);
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }));
+
+    const user = userEvent.setup();
+    render(<App />);
+    const composer = await screen.findByRole("textbox", { name: "消息内容" });
+    await waitFor(() => expect(storageWrite).toHaveBeenCalled());
+    const writesBeforeRequest = storageWrite.mock.calls.length;
+    await user.type(composer, "stream visibly{enter}");
+    await waitFor(() => expect(streamController).toBeDefined());
+
+    await act(async () => {
+      streamController!.enqueue(new TextEncoder().encode(
+        'data: {"choices":[{"delta":{"content":"partial "},"finish_reason":null}]}\n\n',
+      ));
+    });
+    expect(await screen.findByText("partial")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "取消生成" })).toBeInTheDocument();
+    expect(storageWrite).toHaveBeenCalledTimes(writesBeforeRequest);
+
+    await act(async () => {
+      streamController!.enqueue(new TextEncoder().encode(
+        'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n\n'
+        + 'data: [DONE]\n\n',
+      ));
+      streamController!.close();
+    });
+
+    expect(await screen.findByText("partial done")).toBeInTheDocument();
+    expect(await screen.findByText("路由策略")).toBeInTheDocument();
+    await waitFor(() => expect(storageWrite.mock.calls.length).toBeGreaterThan(writesBeforeRequest));
+  });
+
+  it("keeps a truncated answer visible and marks it incomplete", async () => {
+    const requestId = requestIdFor(100);
+    const chunk = 'data: {"choices":[{"delta":{"content":"kept partial"},"finish_reason":null}]}\n\n';
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/v1/models") return new Response("{}", { status: 200 });
+      return new Response(chunk, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/event-stream",
+          "X-PolyGate-Request-ID": requestId,
+        },
+      });
+    }));
+
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByRole("textbox", { name: "消息内容" }), "truncate{enter}");
+
+    expect(await screen.findByText("kept partial")).toBeInTheDocument();
+    expect(await screen.findByText("回答不完整")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
   });
 

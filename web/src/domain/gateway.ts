@@ -48,6 +48,43 @@ export const gatewayResponseSchema = z
     return { answer, decisionCard };
   });
 
+export const decisionRecordSchema = z
+  .object({
+    schema_version: z.literal(1),
+    request_id: z.string().regex(/^req_[0-9a-f]{32}$/),
+    outcome: z.enum(["success", "cache_hit", "cancelled", "partial_error"]),
+    chosen_provider: z.string().min(1),
+    initial_provider: z.string().min(1),
+    reason: z.string().min(1),
+    cache_hit: z.boolean(),
+    stream: z.boolean(),
+    cost_estimate_usd: z.number().nonnegative(),
+    latency_ms: z.number().int().nonnegative(),
+    tokens: tokensSchema,
+    retries: z.number().int().nonnegative(),
+    failover_from: z.string().nullable(),
+    failover_count: z.number().int().nonnegative(),
+    created_at: z.string(),
+    expires_at: z.string(),
+  })
+  .transform((record): DecisionCardData => ({
+    chosenProvider: record.chosen_provider,
+    initialProvider: record.initial_provider,
+    reason: record.reason,
+    cacheHit: record.cache_hit,
+    costEstimateUsd: record.cost_estimate_usd,
+    latencyMs: record.latency_ms,
+    tokens: record.tokens,
+    retries: record.retries,
+    failoverFrom: record.failover_from,
+    failoverCount: record.failover_count,
+    requestId: record.request_id,
+    outcome: record.outcome,
+    stream: record.stream,
+    createdAt: record.created_at,
+    expiresAt: record.expires_at,
+  }));
+
 export interface GatewayMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -56,6 +93,8 @@ export interface GatewayMessage {
 export interface GatewayRequest {
   model: string;
   messages: GatewayMessage[];
+  stream?: boolean;
+  stream_options?: { include_usage: boolean };
   polygate: {
     quality: RoutingSettings["quality"];
     privacy: RoutingSettings["privacy"];
