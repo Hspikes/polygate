@@ -26,6 +26,7 @@
     "started_at": { "type": "string", "format": "date-time" },
     "completed_at": { "type": "string", "format": "date-time" },
     "result": { "type": "object" },
-    "error": { "type": "string" }
+    "error": { "type": "string" },
+    "policy_version": { "type": "integer", "minimum": 1 }
   }
 }

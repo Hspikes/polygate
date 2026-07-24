@@ -90,6 +90,7 @@ class SerializationAliasTests(unittest.TestCase):
                 "gateway_request",
                 "snippets",
                 "policy_adjustments",
+		"policy_version",
             },
         )
         self.assertEqual(payload["expires_in_seconds"], 600)
@@ -184,6 +185,34 @@ class EnqueuedJobSerializationTests(unittest.TestCase):
         second = store.enqueue(preview, idempotency_key="same-key")
         self.assertEqual(first.job_id, second.job_id)
 
+class PolicyVersionFieldTests(unittest.TestCase):
+    """policy_version 是新增的可选字段（Policy v1 契约），验证其可选行为。"""
+
+    def test_preview_accepts_policy_version(self):
+        # 带 policy_version 能解析
+        payload = copy.deepcopy(EXAMPLES["preview"])
+        payload["policy_version"] = 5
+        preview = PreviewResponse.model_validate(payload)
+        self.assertEqual(preview.policy_version, 5)
+
+    def test_preview_omitting_policy_version_defaults_none(self):
+        # 不带 policy_version 也能解析，默认 None（向后兼容）
+        payload = copy.deepcopy(EXAMPLES["preview"])
+        payload.pop("policy_version", None)
+        preview = PreviewResponse.model_validate(payload)
+        self.assertIsNone(preview.policy_version)
+
+    def test_job_accepts_policy_version(self):
+        payload = copy.deepcopy(EXAMPLES["job"])
+        payload["policy_version"] = 3
+        job = JobRecord.model_validate(payload)
+        self.assertEqual(job.policy_version, 3)
+
+    def test_job_omitting_policy_version_defaults_none(self):
+        payload = copy.deepcopy(EXAMPLES["job"])
+        payload.pop("policy_version", None)
+        job = JobRecord.model_validate(payload)
+        self.assertIsNone(job.policy_version)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

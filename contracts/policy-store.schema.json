@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://polygate.local/contracts/policy-store.schema.json",
+  "title": "PolyGate Stored Policy Version",
+  "description": "A single persisted policy version record. The ConfigMap keeps the active version plus the most recent 20 full version records. The nested 'policy' object is validated separately against policy.schema.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "status", "created_at", "created_by", "change_note", "rollback_from", "policy"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonically increasing version number. Never reused, even on rollback."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "historical"]
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "created_by": { "type": "string", "minLength": 1 },
+    "change_note": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Required audit note describing the change."
+    },
+    "rollback_from": {
+      "type": ["integer", "null"],
+      "description": "If produced by a rollback, the version number it copied content from; otherwise null."
+    },
+    "policy": {
+      "type": "object",
+      "description": "Full PolicyDraft content; validated separately against policy.schema.json."
+    }
+  }
+}

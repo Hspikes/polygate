@@ -19,7 +19,9 @@
 | 9 | `automation-job.schema.json` | 异步 Job 状态和结果 | A/B | D、C 监控 |
 | 10 | `automation-examples.json` | Automation 三份契约的联调示例 | A/B | C/D、测试脚本 |
 | 11 | `decision-record.schema.json` + `.example.json` | 短 TTL 最终路由记录与查询响应 | Gateway | Web、Pi |
-
+| 12 | `policy.schema.json` | Policy Draft v1（可调路由/调度参数，guardrails 不在内） | A | B 校验、Gateway/Worker 加载、D 编辑器 |
+| 13 | `policy-store.schema.json` | 持久化的策略版本记录（version/status/change_note/rollback_from/policy） | A | B 存储、C 监控 |
+| 14 | `policy-examples.json` | Policy draft / stored version / active response 联调示例 | A | B/C/D、测试脚本 |
 ## 契约 #11：Decision Record v1
 
 `GET /v1/decisions/{request_id}` 使用与 Chat Completions 相同的 Bearer 鉴权，返回一次
@@ -45,10 +47,34 @@ request ID，再独立查询本契约。
 
 ## 缓存 key 规范化规则（A 与 B 第一天一起定死，避免命中率飘）
 
-当前采用：`sha256(normalize(messages) + privacy + scope + quality + max_cost_usd + latency_target_ms)`，
+当前采用：`sha256(normalize(messages) + privacy + scope + quality + max_cost_usd + latency_target_ms + policy_version)`，
 其中 `scope` 区分自动路由与强制 Provider，`normalize` =
 去掉每条 message 首尾空白 + 保持 role/顺序不变 + 不改大小写。
 所有可能改变路由结果的约束都必须进入缓存键，避免修改偏好后命中旧路由结果。
+`policy_version` 是 active policy 的版本号：策略发布后路由结果可能变化，v4 缓存不能被 v5 请求命中；旧缓存等待 TTL 自然过期，无需在发布时清空 Redis；rollback 会生成新版本号（如 v6），也不会错误复用 v4/v5 的缓存。
 该 P0 键只用于纯 `role/content` 文本请求；tools、流式请求、消息元数据、
 `session_id` 和显式生成参数一律绕过缓存，避免未进入上述键的语义发生碰撞。
 > 语义缓存是 P3，P0 只做「精确 + 轻规范化」。如需扩展规范化规则，改 `gateway/app/cache.py::normalize`，并同步更新本节。
+
+## Policy v1 指标名（A/B/C 共同固定，Grafana 与告警依赖）
+
+Policy 管理相关的 Prometheus 指标名在此固定，不得随实现改动。指标职责见
+`docs/superpowers/specs/2026-07-24-policy-management-design.md` 第 14 节：
+
+| 指标名 | 类型 | 暴露方 | 含义 |
+|---|---|---|---|
+| `polygate_policy_active_version` | Gauge | Policy API | 控制面当前 active 策略版本号 |
+| `polygate_policy_loaded_version` | Gauge | Gateway / Worker | 各组件当前已加载的策略版本号 |
+| `polygate_policy_publications_total` | Counter | Policy API | 策略发布次数（按结果 outcome 标签区分） |
+| `polygate_policy_reload_failures_total` | Counter | Gateway / Worker | 拉取或校验新策略失败、继续使用 Last Known Good 的次数 |
+| `polygate_policy_last_publish_timestamp_seconds` | Gauge | Policy API | 最近一次成功发布的 Unix 时间戳 |
+
+> 版本一致性判据：若 `polygate_policy_active_version` 与任一组件的
+> `polygate_policy_loaded_version` 不一致超过 30 秒，Grafana 面板进入告警颜色。
+
+## 决策卡片 policy_version 结论（A/D 待对齐）
+
+`decision-card.schema.json` 是否新增可选 `policy_version` 字段需 A 与 D 共同确认。
+未确认前，Gateway 通过响应头 `X-PolyGate-Policy-Version: <n>` 暴露版本，决策卡片
+结构保持不变。Automation Preview/Job 契约已新增可选 `policy_version`（integer，
+minimum 1，不进 required）。
