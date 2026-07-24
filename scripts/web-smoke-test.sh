@@ -10,6 +10,7 @@ python3 - "$WEB_BASE" "$SKIP_WEB_HEALTH" <<'PY'
 import json
 import sys
 import time
+import urllib.error
 import urllib.request
 
 base = sys.argv[1].rstrip("/")
@@ -23,6 +24,8 @@ def post(messages):
     payload = json.dumps({
         "model": "auto",
         "messages": messages,
+        "stream": True,
+        "stream_options": {"include_usage": True},
         "polygate": {
             "quality": "balanced",
             "privacy": "standard",
@@ -37,7 +40,39 @@ def post(messages):
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=30) as response:
-        return json.load(response)
+        request_id = response.headers.get("X-PolyGate-Request-ID")
+        assert request_id, "stream response missing X-PolyGate-Request-ID"
+        answer = []
+        saw_done = False
+        for raw_line in response:
+            line = raw_line.decode("utf-8").strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                saw_done = True
+                continue
+            chunk = json.loads(data)
+            for choice in chunk.get("choices", []):
+                content = choice.get("delta", {}).get("content")
+                if isinstance(content, str):
+                    answer.append(content)
+        assert saw_done, "stream ended without data: [DONE]"
+        return "".join(answer), request_id
+
+def decision(request_id):
+    for attempt in range(10):
+        try:
+            status, body = get("/api/v1/decisions/" + request_id)
+            assert status == 200, (status, body)
+            record = json.loads(body)
+            assert record.get("request_id") == request_id, record
+            return record
+        except urllib.error.HTTPError as error:
+            if error.code != 404 or attempt == 9:
+                raise
+            time.sleep(0.1)
+    raise AssertionError("Decision Record did not become available")
 
 if not skip_web_health:
     status, health = get("/healthz")
@@ -54,16 +89,17 @@ print("OK  React entry document")
 
 nonce = time.time_ns()
 first_messages = [{"role": "user", "content": f"web smoke first turn {nonce}"}]
-first = post(first_messages)
-answer = first.get("answer") or first["choices"][0]["message"]["content"]
-assert answer and first.get("polygate", {}).get("request_id"), first
-print("OK  Same-origin /api completion")
+answer, first_request_id = post(first_messages)
+assert answer, answer
+assert decision(first_request_id).get("outcome") == "success"
+print("OK  Same-origin /api SSE completion + Decision Record")
 
-second = post([
+second_answer, second_request_id = post([
     *first_messages,
     {"role": "assistant", "content": answer},
     {"role": "user", "content": "web smoke second turn"},
 ])
-assert second.get("polygate", {}).get("request_id"), second
-print("OK  Multi-turn completion through Web entry")
+assert second_answer, second_answer
+assert decision(second_request_id).get("outcome") == "success"
+print("OK  Multi-turn SSE completion through Web entry")
 PY

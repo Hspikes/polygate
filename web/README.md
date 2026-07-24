@@ -1,7 +1,7 @@
 # PolyGate Web
 
-Vite + React + TypeScript 多轮聊天客户端。浏览器维护会话和完整消息历史，Gateway
-保持无状态；所有环境统一通过同源 `/api` 访问 Gateway。
+Vite + React + TypeScript 多轮流式聊天客户端。浏览器维护会话和完整消息历史；所有环境
+统一通过同源 `/api` 访问 Gateway。
 
 ## 本地开发
 
@@ -39,9 +39,22 @@ Compose 内部的 `gateway:8000`。Nginx 会在运行时用 `WEB_GATEWAY_API_KEY
 `/api/*` 请求中的 Authorization；公开 `/v1/*` 则继续透传客户端自己的凭证。可运行
 `./scripts/web-smoke-test.sh` 验证静态健康、鉴权就绪、代理和多轮请求。
 
+## 流式回答
+
+真实聊天统一以 `stream=true` 请求标准 OpenAI SSE。浏览器使用增量 UTF-8 解码和 SSE
+分帧，在 `[DONE]` 前持续更新当前 assistant message；标准 tool-call/usage chunk 不会被
+误当成文本。用户取消会 abort fetch 并关闭上游流。流在 `[DONE]` 前结束时，已收到的
+内容会保留并明确标记“回答不完整”，不会伪装为成功。
+
+流正常结束后，Web 使用响应 Header 中的 request ID 查询
+`GET /api/v1/decisions/{request_id}`，再展示最终 Provider、成本、tokens、重试和
+failover。短暂的 404 会有限重试；记录服务不可用不会丢弃已经完成的回答，而会显示带
+request ID 的提示。
+
 ## 数据与隐私
 
 - 普通会话以带 `schemaVersion` 的结构保存在当前浏览器 `localStorage`；
+- 流式 delta 只更新内存；localStorage 只在完成、失败或取消等稳定状态写入；
 - 恢复前使用 Zod 校验，损坏数据会安全回退；
 - 高隐私会话自动使用“不保存”模式，刷新后消失；
 - 不保存 Gateway Key、Provider Key 或其他凭证；
