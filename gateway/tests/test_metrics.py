@@ -97,6 +97,10 @@ class GatewayMetricsTest(unittest.TestCase):
             "polygate_provider_requests_total",
             {"outcome": "error"},
         )
+        stream_cancelled_before = metric_total(
+            "polygate_streams_total",
+            {"outcome": "cancelled"},
+        )
 
         with (
             patch(
@@ -138,6 +142,13 @@ class GatewayMetricsTest(unittest.TestCase):
                 {"outcome": "error"},
             ),
             provider_error_before,
+        )
+        self.assertEqual(
+            metric_total(
+                "polygate_streams_total",
+                {"outcome": "cancelled"},
+            ),
+            stream_cancelled_before + 1,
         )
 
     def test_successful_request_updates_business_metrics(self):

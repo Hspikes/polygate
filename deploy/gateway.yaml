@@ -85,6 +85,13 @@ spec:
           env:
             - { name: REDIS_URL, value: "redis://redis:6379/0" }
             - { name: PROVIDERS_FILE, value: "/config/providers.yaml" }
+            - { name: PROVIDER_TIMEOUT_SECONDS, value: "10" }
+            - { name: PROVIDER_STREAM_IDLE_TIMEOUT_SECONDS, value: "90" }
+            - { name: GATEWAY_NON_STREAM_BUDGET_SECONDS, value: "30" }
+            - { name: GATEWAY_STREAM_START_BUDGET_SECONDS, value: "30" }
+            - { name: PROVIDER_MAX_RETRIES, value: "2" }
+            - { name: PROVIDER_RETRY_BASE_DELAY_SECONDS, value: "0.2" }
+            - { name: PROVIDER_RETRY_MAX_BACKOFF_SECONDS, value: "5" }
             - name: REAL_A_API_KEY
               valueFrom: { secretKeyRef: { name: provider-secrets, key: real-a-key, optional: true } }
             - name: POLYGATE_API_KEYS

@@ -152,6 +152,10 @@ polygate:gateway_cancellation_ratio:rate5m
 sum by (result) (polygate_cache_requests_total)
 sum by (provider, outcome) (polygate_provider_requests_total)
 polygate_circuit_state
+sum by (provider, reason) (rate(polygate_provider_retries_total[5m]))
+sum by (from_provider, to_provider) (rate(polygate_failovers_total[5m]))
+sum by (outcome) (rate(polygate_streams_total[5m]))
+sum by (phase) (polygate_request_budget_exhausted_total)
 sum by (provider, direction) (polygate_tokens_total)
 sum(polygate_estimated_cost_usd_total)
 ```
