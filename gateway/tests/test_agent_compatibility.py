@@ -23,6 +23,7 @@ from app.adapters import (  # noqa: E402
     build_provider_payload,
 )
 from app.circuit_breaker import CircuitBreakerRegistry  # noqa: E402
+from app.decisions import DECISION_KEY_PREFIX  # noqa: E402
 from app.main import CACHE, app  # noqa: E402
 from app.models import GatewayRequest  # noqa: E402
 from app.retry import (  # noqa: E402
@@ -285,7 +286,14 @@ class AgentCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIsNotNone(response.json()["polygate"]["failover_from"])
-        cache_set.assert_not_called()
+        self.assertTrue(cache_set.call_args_list)
+        self.assertTrue(
+            all(
+                call.args[0].startswith(DECISION_KEY_PREFIX)
+                for call in cache_set.call_args_list
+            ),
+            "failover response must not be stored under an exact-cache key",
+        )
 
     def test_forced_provider_without_tools_is_rejected_before_call(self):
         legacy_provider = {
