@@ -153,6 +153,11 @@ IMAGE_TAG=<刚才输出的提交号> ./scripts/deploy-kubernetes-application.sh
 
 ## Web 入口验证
 
+Web Pod 的 readiness/liveness 只检查 `/healthz`，用于判断非特权 Nginx 和静态页面
+是否可服务；它不会因 Gateway 短暂故障而从 Service endpoints 中移除。浏览器在线
+状态和下方 smoke test 会另外调用鉴权后的 `/api/v1/models`。Web 根文件系统保持
+只读，运行时模板只写入挂载在 `/etc/nginx/conf.d` 的 `emptyDir`。
+
 ```bash
 kubectl get service web
 WEB_BASE=http://<节点公网IP>:30080 ./scripts/web-smoke-test.sh
