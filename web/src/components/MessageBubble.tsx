@@ -6,10 +6,13 @@ import { DecisionCard } from "./DecisionCard";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 const errorLabels = {
+  auth: "认证错误",
   network: "网络错误",
   routing: "无可用路由",
   provider: "模型服务错误",
+  timeout: "模型响应超时",
   budget: "预算限制",
+  rate_limit: "请求过于频繁",
   validation: "请求不合法",
   unknown: "请求失败",
 };
@@ -17,6 +20,7 @@ const errorLabels = {
 export function MessageBubble({ message, canRegenerate = false }: { message: ChatMessage; canRegenerate?: boolean }) {
   const { regenerateLast, retryRequest } = useConversations();
   const [copied, setCopied] = useState(false);
+  const [requestIdCopied, setRequestIdCopied] = useState(false);
 
   if (message.role === "user") {
     return (
@@ -78,6 +82,22 @@ export function MessageBubble({ message, canRegenerate = false }: { message: Cha
             <span className="request-feedback-copy">
               <strong>{errorLabels[message.error?.kind ?? "unknown"]}</strong>
               <span>{message.error?.message ?? "请求失败，请稍后重试。"}</span>
+              {message.error?.requestId && (
+                <span className="request-error-trace">
+                  Request ID: <code>{message.error.requestId}</code>
+                  <button
+                    type="button"
+                    aria-label="复制 request ID"
+                    title={requestIdCopied ? "Request ID 已复制" : "复制 request ID"}
+                    onClick={() => {
+                      void navigator.clipboard.writeText(message.error!.requestId!).then(() => {
+                        setRequestIdCopied(true);
+                        window.setTimeout(() => setRequestIdCopied(false), 1400);
+                      });
+                    }}
+                  >{requestIdCopied ? "已复制" : "复制"}</button>
+                </span>
+              )}
             </span>
             <button className="request-control" type="button" onClick={() => void retryRequest(message.id)}>重试</button>
           </div>

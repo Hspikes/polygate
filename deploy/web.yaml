@@ -15,6 +15,9 @@ spec:
         - name: web
           image: 356029564744.dkr.ecr.us-east-1.amazonaws.com/polygate-web:v1
           ports: [{ name: http, containerPort: 8080 }]
+          env:
+            - name: WEB_GATEWAY_API_KEY
+              valueFrom: { secretKeyRef: { name: gateway-client-secrets, key: web-api-key } }
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
@@ -22,7 +25,7 @@ spec:
           resources:
             requests: { cpu: "25m", memory: "32Mi" }
             limits: { cpu: "200m", memory: "128Mi" }
-          readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 3, periodSeconds: 5 }
+          readinessProbe: { httpGet: { path: /api/v1/models, port: http }, initialDelaySeconds: 3, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 10, periodSeconds: 10 }
           volumeMounts:
             - { name: nginx-tmp, mountPath: /tmp }

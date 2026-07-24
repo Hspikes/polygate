@@ -30,9 +30,19 @@ export interface DecisionCardData {
 }
 
 export interface MessageError {
-  kind: "network" | "routing" | "provider" | "budget" | "validation" | "unknown";
+  kind:
+    | "auth"
+    | "network"
+    | "routing"
+    | "provider"
+    | "timeout"
+    | "budget"
+    | "rate_limit"
+    | "validation"
+    | "unknown";
   message: string;
   status?: number;
+  requestId?: string;
 }
 
 export interface ChatMessage {
