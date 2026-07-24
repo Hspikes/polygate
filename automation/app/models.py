@@ -83,6 +83,7 @@ class PreviewResponse(StrictModel):
     gateway_request: GatewayRequest
     snippets: Snippets
     policy_adjustments: list[str]
+    policy_version: int | None = Field(default=None, ge=1)
 
 
 class JobSubmission(StrictModel):
@@ -107,7 +108,7 @@ class JobRecord(StrictModel):
     completed_at: datetime | None = None
     result: dict[str, Any] | None = None
     error: str | None = None
-
+    policy_version: int | None = Field(default=None, ge=1)
 
 class TemplateDefinition(StrictModel):
     id: Scenario
