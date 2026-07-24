@@ -28,10 +28,18 @@ class WebDeploymentTests(unittest.TestCase):
         pod = deployment["spec"]["template"]["spec"]
         container = pod["containers"][0]
         self.assertTrue(pod["securityContext"]["runAsNonRoot"])
+        self.assertEqual(pod["securityContext"]["fsGroup"], 101)
         self.assertTrue(container["securityContext"]["readOnlyRootFilesystem"])
         self.assertFalse(container["securityContext"]["allowPrivilegeEscalation"])
         self.assertEqual(container["readinessProbe"]["httpGet"]["path"], "/healthz")
         self.assertEqual(container["livenessProbe"]["httpGet"]["path"], "/healthz")
+        mounts = {
+            mount["mountPath"]: mount["name"]
+            for mount in container["volumeMounts"]
+        }
+        self.assertEqual(mounts["/etc/nginx/conf.d"], "nginx-conf")
+        volumes = {volume["name"]: volume for volume in pod["volumes"]}
+        self.assertEqual(volumes["nginx-conf"]["emptyDir"], {})
         self.assertIn("requests", container["resources"])
         self.assertIn("limits", container["resources"])
 
@@ -56,6 +64,14 @@ class WebDeploymentTests(unittest.TestCase):
         self.assertIn("npm ci", dockerfile)
         self.assertIn("npm run build", dockerfile)
         self.assertIn("nginxinc/nginx-unprivileged", dockerfile)
+        self.assertIn(
+            "wget -qO- http://127.0.0.1:8080/healthz",
+            dockerfile,
+        )
+        self.assertNotIn(
+            "wget -qO- http://127.0.0.1:8080/api/v1/models",
+            dockerfile,
+        )
         self.assertNotIn("npm run dev", dockerfile)
 
 

@@ -25,6 +25,16 @@ describe("Nginx Web authentication boundary", () => {
     );
   });
 
+  it("keeps container health independent from Gateway availability", () => {
+    expect(nginxConfig).toContain("location = /healthz");
+    expect(dockerfile).toContain(
+      "wget -qO- http://127.0.0.1:8080/healthz",
+    );
+    expect(dockerfile).not.toContain(
+      "wget -qO- http://127.0.0.1:8080/api/v1/models",
+    );
+  });
+
   it("keeps the authenticated /api proxy unbuffered for browser SSE", () => {
     const api = locationBody("/api/");
     expect(api).toContain("proxy_buffering off;");
