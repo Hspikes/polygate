@@ -38,6 +38,16 @@ class RetryBudgetExceededError(TimeoutError):
     def __init__(self, provider_name: str):
         super().__init__(f"{provider_name} retry budget exhausted")
         self.provider_name = provider_name
+        self.polygate_retries = 0
+
+
+def _attach_retry_count(exc: Exception, retries: int) -> Exception:
+    """Annotate a terminal provider error for request-level accounting."""
+    try:
+        setattr(exc, "polygate_retries", retries)
+    except (AttributeError, TypeError):
+        pass
+    return exc
 
 
 def _is_transient_error(exc: Exception) -> bool:
@@ -188,18 +198,22 @@ def call_provider_with_resilience(
             return result
         except Exception as exc:
             if isinstance(exc, RetryBudgetExceededError):
+                _attach_retry_count(exc, attempt)
                 raise
             last_exc = exc
             is_last_attempt = attempt == max_retries
             if not _is_transient_error(exc) or is_last_attempt:
                 _record_terminal_failure(breaker, name, exc)
+                _attach_retry_count(exc, attempt)
                 raise
             delay = _retry_delay(exc, attempt, base_delay_s, max_backoff_s)
             try:
                 _ensure_delay_fits_budget(name, delay, deadline, clock)
             except RetryBudgetExceededError:
                 _record_terminal_failure(breaker, name, exc)
-                raise
+                budget_error = RetryBudgetExceededError(name)
+                _attach_retry_count(budget_error, attempt)
+                raise budget_error from exc
             record_provider_retry(name, _retry_reason(exc))
             sleeper(delay)
 
@@ -240,7 +254,9 @@ async def open_provider_stream_with_resilience(
                 )
             except TimeoutError as exc:
                 _record_terminal_failure(breaker, name, exc)
-                raise RetryBudgetExceededError(name) from exc
+                budget_error = RetryBudgetExceededError(name)
+                _attach_retry_count(budget_error, attempt)
+                raise budget_error from exc
             # The first chunk only proves that the stream opened. Do not clear
             # breaker history until the downstream consumer observes a clean
             # finish_reason followed by data: [DONE].
@@ -248,18 +264,22 @@ async def open_provider_stream_with_resilience(
             return opened
         except Exception as exc:
             if isinstance(exc, RetryBudgetExceededError):
+                _attach_retry_count(exc, attempt)
                 raise
             last_exc = exc
             is_last_attempt = attempt == max_retries
             if not _is_transient_error(exc) or is_last_attempt:
                 _record_terminal_failure(breaker, name, exc)
+                _attach_retry_count(exc, attempt)
                 raise
             delay = _retry_delay(exc, attempt, base_delay_s, max_backoff_s)
             try:
                 _ensure_delay_fits_budget(name, delay, deadline, clock)
             except RetryBudgetExceededError:
                 _record_terminal_failure(breaker, name, exc)
-                raise
+                budget_error = RetryBudgetExceededError(name)
+                _attach_retry_count(budget_error, attempt)
+                raise budget_error from exc
             record_provider_retry(name, _retry_reason(exc))
             await sleeper(delay)
 

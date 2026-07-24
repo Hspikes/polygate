@@ -104,6 +104,23 @@ usage-only chunk。
 | `PROVIDER_MAX_RETRIES` | `2` | 每个 Provider 的最大重试次数，范围 0–10 |
 | `PROVIDER_RETRY_BASE_DELAY_SECONDS` | `0.2` | 指数退避基准时间 |
 | `PROVIDER_RETRY_MAX_BACKOFF_SECONDS` | `5` | 本地退避上限，不截短 `Retry-After` |
+| `DECISION_RECORD_TTL_SECONDS` | `3600` | Redis 中脱敏 Decision Record 的保留秒数（60–86400） |
+
+### Decision Record
+
+每个成功的非流式请求、缓存命中和已经开始下游输出的流式请求，都会尽力把最终结果写入
+Redis。客户端从 Chat 响应的 `X-PolyGate-Request-ID` 读取主键，再查询：
+
+```bash
+curl -H "Authorization: Bearer $POLYGATE_API_KEY" \
+  http://localhost:8000/v1/decisions/req_0123456789abcdef0123456789abcdef
+```
+
+`GET /v1/decisions/{request_id}` 与 `/v1/chat/completions` 使用同一套客户端 Bearer
+鉴权。返回契约见 `contracts/decision-record.schema.json`。记录仅包含 Provider、路由
+原因、outcome、成本、tokens、重试、failover 和时间戳；不会保存 prompt、消息、工具
+参数、凭证、上游 URL 或原始错误。默认 TTL 为 1 小时，过期返回 404，Redis 当前不可用
+返回 503。记录写入是 best-effort，Redis 故障不会把已经完成的聊天降级为 5xx。
 
 远程 Pi 通过 Web/Nginx 公网入口使用 `https://<host>/v1`；该位置关闭
 响应/请求缓冲并保留 Authorization。生产环境必须配置非默认客户端 Key。

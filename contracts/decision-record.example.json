@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "request_id": "req_8f3a1c9e1234567890abcdef12345678",
+  "outcome": "success",
+  "chosen_provider": "mock-a",
+  "initial_provider": "mock-b",
+  "reason": "mock-b 首字节前失败，自动切换到满足约束的 mock-a",
+  "cache_hit": false,
+  "stream": true,
+  "cost_estimate_usd": 0.00042,
+  "latency_ms": 312,
+  "tokens": {
+    "input": 340,
+    "output": 128
+  },
+  "retries": 2,
+  "failover_from": "mock-b",
+  "failover_count": 1,
+  "created_at": "2026-07-24T03:00:00Z",
+  "expires_at": "2026-07-24T04:00:00Z"
+}
