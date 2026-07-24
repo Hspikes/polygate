@@ -79,6 +79,23 @@ else
   bad "Gateway circuit state metrics are missing"
 fi
 
+RELIABILITY_METRICS="$(curl -fsS "$GATEWAY/metrics" 2>/dev/null || true)"
+MISSING_RELIABILITY_METRICS=()
+for metric in \
+  polygate_provider_retries_total \
+  polygate_failovers_total \
+  polygate_streams_total \
+  polygate_request_budget_exhausted_total; do
+  if ! grep -q "$metric" <<<"$RELIABILITY_METRICS"; then
+    MISSING_RELIABILITY_METRICS+=("$metric")
+  fi
+done
+if [ "${#MISSING_RELIABILITY_METRICS[@]}" -eq 0 ]; then
+  ok "Gateway exposes retry, failover, stream, and budget metrics"
+else
+  bad "Gateway reliability metrics are missing: ${MISSING_RELIABILITY_METRICS[*]}"
+fi
+
 UP_VALUE=0
 for _ in $(seq 1 15); do
   UP_VALUE="$(query 'up{job="polygate-gateway"}' 2>/dev/null | query_value 2>/dev/null || echo 0)"

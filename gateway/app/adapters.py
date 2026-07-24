@@ -372,7 +372,9 @@ async def open_provider_stream(
     except StopAsyncIteration as exc:
         await response.aclose()
         raise ProviderProtocolError(f"provider {provider['name']} returned an empty SSE stream") from exc
-    except Exception:
+    # A request-budget cancellation is a BaseException on supported Python
+    # versions; always release the checked-out streaming connection.
+    except BaseException:
         await response.aclose()
         raise
 

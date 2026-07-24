@@ -10,8 +10,11 @@
 其他 4xx 不重试；其中请求型 400/422 也不会污染 Provider 熔断状态。
 """
 import asyncio
-import time
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 import random
+import time
+
 import httpx
 
 from app.adapters import (
@@ -22,10 +25,19 @@ from app.adapters import (
     open_provider_stream,
 )
 from app.circuit_breaker import CircuitBreakerRegistry
+from app.metrics import record_provider_retry
 
 
 class ProviderUnavailableError(Exception):
     """熔断器判定该 provider 当前不可用(Open 状态，或半开探测名额已被占用）。"""
+
+
+class RetryBudgetExceededError(TimeoutError):
+    """The next provider attempt cannot fit in the request's retry budget."""
+
+    def __init__(self, provider_name: str):
+        super().__init__(f"{provider_name} retry budget exhausted")
+        self.provider_name = provider_name
 
 
 def _is_transient_error(exc: Exception) -> bool:
@@ -36,6 +48,23 @@ def _is_transient_error(exc: Exception) -> bool:
         status = exc.response.status_code
         return status >= 500 or status in {408, 409, 429}
     return False
+
+
+def _retry_reason(exc: Exception) -> str:
+    """Map retryable failures to a fixed, low-cardinality reason enum."""
+    if isinstance(exc, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(exc, httpx.TransportError):
+        return "transport"
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status == 408:
+            return "timeout"
+        if status == 429:
+            return "429"
+        if status >= 500:
+            return "5xx"
+    return "other"
 
 
 def _is_provider_failure(exc: Exception) -> bool:
@@ -61,6 +90,69 @@ def _record_terminal_failure(
         breaker.record_cancelled(provider_name)
 
 
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """Parse Retry-After seconds or an HTTP date from an upstream response."""
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return None
+    raw = exc.response.headers.get("retry-after")
+    if raw is None:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
+
+
+def _retry_delay(
+    exc: Exception,
+    attempt: int,
+    base_delay_s: float,
+    max_backoff_s: float,
+) -> float:
+    exponential = base_delay_s * (2 ** attempt)
+    jitter = random.uniform(0, base_delay_s)
+    backoff = min(max_backoff_s, exponential + jitter)
+    retry_after = _retry_after_seconds(exc)
+    return max(backoff, retry_after or 0.0)
+
+
+def _remaining_seconds(deadline: float | None, clock) -> float | None:
+    if deadline is None:
+        return None
+    return deadline - clock()
+
+
+def _attempt_timeout(
+    provider_name: str,
+    timeout_s: float,
+    deadline: float | None,
+    clock,
+) -> float:
+    remaining = _remaining_seconds(deadline, clock)
+    if remaining is None:
+        return timeout_s
+    if remaining <= 0:
+        raise RetryBudgetExceededError(provider_name)
+    return min(timeout_s, remaining)
+
+
+def _ensure_delay_fits_budget(
+    provider_name: str,
+    delay: float,
+    deadline: float | None,
+    clock,
+) -> None:
+    remaining = _remaining_seconds(deadline, clock)
+    if remaining is not None and delay >= remaining:
+        raise RetryBudgetExceededError(provider_name)
+
+
 def call_provider_with_resilience(
     provider: dict,
     payload: dict,
@@ -68,6 +160,10 @@ def call_provider_with_resilience(
     timeout_s: float = 10.0,
     max_retries: int = 2,
     base_delay_s: float = 0.2,
+    max_backoff_s: float = 5.0,
+    deadline: float | None = None,
+    clock=time.monotonic,
+    sleeper=time.sleep,
     provider_call=call_provider,
 ) -> AdapterResult:
     """
@@ -85,18 +181,27 @@ def call_provider_with_resilience(
     last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
-            result = provider_call(provider, payload, timeout_s=timeout_s)
+            attempt_timeout = _attempt_timeout(name, timeout_s, deadline, clock)
+            result = provider_call(provider, payload, timeout_s=attempt_timeout)
             breaker.record_success(name)
             result.retries = attempt  # 记录这次成功之前，一共重试了几次
             return result
         except Exception as exc:
+            if isinstance(exc, RetryBudgetExceededError):
+                raise
             last_exc = exc
             is_last_attempt = attempt == max_retries
             if not _is_transient_error(exc) or is_last_attempt:
                 _record_terminal_failure(breaker, name, exc)
                 raise
-            delay = base_delay_s * (2 ** attempt) + random.uniform(0, base_delay_s)
-            time.sleep(delay)
+            delay = _retry_delay(exc, attempt, base_delay_s, max_backoff_s)
+            try:
+                _ensure_delay_fits_budget(name, delay, deadline, clock)
+            except RetryBudgetExceededError:
+                _record_terminal_failure(breaker, name, exc)
+                raise
+            record_provider_retry(name, _retry_reason(exc))
+            sleeper(delay)
 
     # 理论上走不到这里，保险起见还是记一次失败再抛出
     breaker.record_failure(name)
@@ -110,6 +215,10 @@ async def open_provider_stream_with_resilience(
     timeout_s: float = 90.0,
     max_retries: int = 2,
     base_delay_s: float = 0.2,
+    max_backoff_s: float = 5.0,
+    deadline: float | None = None,
+    clock=time.monotonic,
+    sleeper=asyncio.sleep,
 ) -> OpenedProviderStream:
     """Open and prefetch an SSE stream with retry before downstream commit."""
     name = provider["name"]
@@ -119,20 +228,40 @@ async def open_provider_stream_with_resilience(
     last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
-            opened = await open_provider_stream(provider, payload, timeout_s=timeout_s)
+            remaining = _remaining_seconds(deadline, clock)
+            if remaining is not None and remaining <= 0:
+                raise RetryBudgetExceededError(name)
+            opening = open_provider_stream(provider, payload, timeout_s=timeout_s)
+            try:
+                opened = (
+                    await opening
+                    if remaining is None
+                    else await asyncio.wait_for(opening, timeout=remaining)
+                )
+            except TimeoutError as exc:
+                _record_terminal_failure(breaker, name, exc)
+                raise RetryBudgetExceededError(name) from exc
             # The first chunk only proves that the stream opened. Do not clear
             # breaker history until the downstream consumer observes a clean
             # finish_reason followed by data: [DONE].
             opened.retries = attempt
             return opened
         except Exception as exc:
+            if isinstance(exc, RetryBudgetExceededError):
+                raise
             last_exc = exc
             is_last_attempt = attempt == max_retries
             if not _is_transient_error(exc) or is_last_attempt:
                 _record_terminal_failure(breaker, name, exc)
                 raise
-            delay = base_delay_s * (2 ** attempt) + random.uniform(0, base_delay_s)
-            await asyncio.sleep(delay)
+            delay = _retry_delay(exc, attempt, base_delay_s, max_backoff_s)
+            try:
+                _ensure_delay_fits_budget(name, delay, deadline, clock)
+            except RetryBudgetExceededError:
+                _record_terminal_failure(breaker, name, exc)
+                raise
+            record_provider_retry(name, _retry_reason(exc))
+            await sleeper(delay)
 
     breaker.record_failure(name)
     assert last_exc is not None
