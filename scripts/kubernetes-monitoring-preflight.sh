@@ -6,6 +6,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST_DIR="$ROOT_DIR/deploy/monitoring"
 PROMETHEUS_CONFIG="$ROOT_DIR/monitoring/prometheus/prometheus-kubernetes.yml"
+PROMETHEUS_RULES="$ROOT_DIR/monitoring/prometheus/polygate-rules.yml"
 DASHBOARD="$ROOT_DIR/monitoring/grafana/dashboards/polygate-overview.json"
 GRAFANA_DATASOURCE="$ROOT_DIR/monitoring/grafana/provisioning/datasources/prometheus.yml"
 GRAFANA_DASHBOARD_PROVIDER="$ROOT_DIR/monitoring/grafana/provisioning/dashboards/polygate.yml"
@@ -59,14 +60,23 @@ ok "All rendered Kubernetes resources pass schema validation"
 docker run --rm \
   --entrypoint promtool \
   --volume "$PROMETHEUS_CONFIG:/etc/prometheus/prometheus.yml:ro" \
+  --volume "$PROMETHEUS_RULES:/etc/prometheus/polygate-rules.yml:ro" \
   --volume "/dev/null:/var/run/secrets/kubernetes.io/serviceaccount/token:ro" \
   --volume "/etc/ssl/certs/ca-certificates.crt:/var/run/secrets/kubernetes.io/serviceaccount/ca.crt:ro" \
   "$PROMETHEUS_IMAGE" \
   check config /etc/prometheus/prometheus.yml
 ok "The in-cluster Prometheus configuration passes promtool"
 
+docker run --rm \
+  --entrypoint promtool \
+  --volume "$PROMETHEUS_RULES:/etc/prometheus/polygate-rules.yml:ro" \
+  "$PROMETHEUS_IMAGE" \
+  check rules /etc/prometheus/polygate-rules.yml
+ok "PolyGate recording and alert rules pass promtool"
+
 kubectl create configmap polygate-prometheus-config \
   --from-file="prometheus.yml=$PROMETHEUS_CONFIG" \
+  --from-file="polygate-rules.yml=$PROMETHEUS_RULES" \
   --dry-run=client \
   --output=yaml >/dev/null
 kubectl create configmap polygate-grafana-dashboard \
@@ -81,7 +91,7 @@ kubectl create configmap polygate-grafana-dashboard-provider \
   --from-file="polygate.yml=$GRAFANA_DASHBOARD_PROVIDER" \
   --dry-run=client \
   --output=yaml >/dev/null
-ok "Prometheus and Grafana source files render as ConfigMaps"
+ok "Prometheus config, rules, and Grafana source files render as ConfigMaps"
 
 python3 - "$DASHBOARD" <<'PY'
 import json

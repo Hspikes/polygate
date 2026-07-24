@@ -21,7 +21,19 @@ def overview_queries(window: Window) -> dict[str, str]:
         "request_rate": f"sum(rate(polygate_requests_total[{window}]))",
         "error_rate": (
             "(sum(rate(polygate_requests_total"
-            f'{{outcome=~".*_error"}}[{window}])) or vector(0)) '
+            "{outcome=~\"routing_error|provider_error|provider_timeout|"
+            f'server_error|partial_error\"}}[{window}])) or vector(0)) '
+            "/ sum(rate(polygate_requests_total"
+            f'{{outcome!~"client_error|cancelled"}}[{window}]))'
+        ),
+        "client_rejection_rate": (
+            "(sum(rate(polygate_requests_total"
+            f'{{outcome="client_error"}}[{window}])) or vector(0)) '
+            f"/ sum(rate(polygate_requests_total[{window}]))"
+        ),
+        "cancellation_rate": (
+            "(sum(rate(polygate_requests_total"
+            f'{{outcome="cancelled"}}[{window}])) or vector(0)) '
             f"/ sum(rate(polygate_requests_total[{window}]))"
         ),
         "request_p95": (
@@ -50,14 +62,15 @@ def overview_queries(window: Window) -> dict[str, str]:
             f'{{outcome="success"}}[{window}])) '
             "or on (provider) "
             "(0 * sum by (provider) (rate(polygate_provider_requests_total"
-            f"[{window}])))) "
+            f'{{outcome!="cancelled"}}[{window}])))) '
             "/ sum by (provider) (rate(polygate_provider_requests_total"
-            f"[{window}]))"
+            f'{{outcome!="cancelled"}}[{window}]))'
         ),
         "provider_p95": (
             "histogram_quantile(0.95, "
             "sum by (provider, le) "
-            f"(rate(polygate_provider_duration_seconds_bucket[{window}]))) "
+            "(rate(polygate_provider_duration_seconds_bucket"
+            f'{{outcome!="cancelled"}}[{window}]))) '
             "* 1000"
         ),
     }
@@ -72,6 +85,12 @@ def build_overview(
     gateway_up = finite_or_none(_first(results["gateway_up"]))
     request_rate = _non_negative(_first(results["request_rate"]))
     error_rate = _optional_ratio(_first(results["error_rate"]))
+    client_rejection_rate = _optional_ratio(
+        _first(results["client_rejection_rate"])
+    )
+    cancellation_rate = _optional_ratio(
+        _first(results["cancellation_rate"])
+    )
     request_p95 = finite_or_none(_first(results["request_p95"]))
     cache_hit_rate = _optional_ratio(_first(results["cache_hit_rate"]))
 
@@ -115,10 +134,16 @@ def build_overview(
         )
     else:
         if error_rate is None:
-            warnings.append(
-                "No Gateway request traffic in the selected window; "
-                "error rate and P95 latency are unavailable."
-            )
+            if client_rejection_rate is None and cancellation_rate is None:
+                warnings.append(
+                    "No Gateway request traffic in the selected window; "
+                    "service error rate and P95 latency are unavailable."
+                )
+            else:
+                warnings.append(
+                    "No service-eligible Gateway traffic in the selected "
+                    "window; service error rate is unavailable."
+                )
         if cache_hit_rate is None:
             warnings.append(
                 "No cache lookups in the selected window; "
@@ -139,6 +164,8 @@ def build_overview(
             requests_total=_counter(_first(results["requests_total"])),
             requests_per_second=request_rate,
             error_rate=error_rate,
+            client_rejection_rate=client_rejection_rate,
+            cancellation_rate=cancellation_rate,
             p95_latency_ms=request_p95,
         ),
         cache=CacheMetrics(

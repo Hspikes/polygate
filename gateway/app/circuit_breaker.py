@@ -25,8 +25,8 @@
         # 直接跳过 real-a,router 会去选别的 provider
         ...
 """
-import time
 import threading
+import time
 from enum import Enum
 
 
@@ -176,3 +176,11 @@ class CircuitBreakerRegistry:
         """给 /provider-status 这类调试端点用，展示更细的原因（比如 half_open_probe)。"""
         with self._lock:
             return {name: b.reason() for name, b in self._breakers.items()}
+
+    def state_snapshot(self) -> dict[str, str]:
+        """Return stable enum values suitable for low-cardinality metrics."""
+        with self._lock:
+            return {
+                name: breaker.state.value
+                for name, breaker in self._breakers.items()
+            }

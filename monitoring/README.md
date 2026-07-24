@@ -59,10 +59,11 @@ Grafana is pinned to the OSS `grafana/grafana:12.4.0` image. No manual setup is
 needed: Compose mounts the data-source YAML and dashboard JSON from
 `monitoring/grafana/`, and the dashboard opens as the local home page.
 
-The dashboard includes Gateway availability, request throughput, error rate,
-P95 latency, cache hit rate, tokens, estimated cost, and per-provider traffic,
-success rate, latency, and cost. Its Kubernetes section adds available and
-desired replicas, per-Pod CPU and memory, HPA history, and container restarts.
+The dashboard includes Gateway availability, request throughput, service error
+rate, client rejection rate, cancellation rate, P95 latency, cache hit rate,
+tokens, estimated cost, and per-provider traffic, success rate, latency, and
+cost. Its Kubernetes section adds available and desired replicas, per-Pod CPU
+and memory, HPA history, and container restarts.
 
 Anonymous Viewer access is enabled only to make local coursework demos open
 without a login. Do not expose this Compose configuration directly to the
@@ -90,9 +91,15 @@ Prometheus; deployment details are in `deploy/monitoring/README.md`.
 
 Ratio fields use `null` when the selected window contains no relevant traffic:
 
-- `gateway.error_rate` is `null` when there are no Gateway requests.
+- `gateway.error_rate` is the service error rate. Its numerator includes only
+  `routing_error`, `provider_error`, `provider_timeout`, `server_error`, and
+  `partial_error`; its denominator excludes `client_error` and `cancelled`.
+- `gateway.client_rejection_rate` and `gateway.cancellation_rate` divide their
+  respective outcomes by all Gateway requests.
+- Gateway ratio fields are `null` when their denominator has no traffic.
 - `cache.hit_rate` is `null` when there are no cache lookups.
-- `providers[].success_rate` is `null` when that provider has no calls.
+- `providers[].success_rate` excludes client-cancelled calls from its
+  denominator and is `null` when that provider has no eligible calls.
 
 This is different from `0`, which means traffic existed and none of it matched
 the numerator (for example, a provider received calls but none succeeded).
@@ -104,6 +111,26 @@ may be incomplete or stale. With a healthy target but no traffic, `partial`
 remains `false` and `warnings` explains which rate-based fields are unavailable.
 If Prometheus cannot execute the fixed queries at all, the endpoint still
 returns HTTP 502 rather than a partial response.
+
+## Recording rules and alerts
+
+Both local and Kubernetes Prometheus load
+`monitoring/prometheus/polygate-rules.yml`. The file records the 5-minute
+service error, client rejection, and cancellation ratios and defines this
+minimal alert set:
+
+- `GatewayTargetDown`
+- `HighProviderErrorOrTimeoutRate`
+- `GatewayP95LatencyAboveSLO`
+- `ProviderCircuitOpenTooLong`
+- `GatewayPodRestarting` (Kubernetes only)
+- `GatewayHPAAtMaxReplicas` (Kubernetes only)
+
+Client rejection and cancellation never trigger the service-error alert.
+Alert labels remain low-cardinality; request IDs, prompts, URLs, and raw error
+messages are deliberately absent. Prometheus evaluates the rules locally even
+without Alertmanager, so their pending/firing state is visible at
+<http://localhost:9090/alerts>.
 
 Run the API unit tests inside its Docker image; no host Python environment is
 required:
@@ -119,8 +146,12 @@ docker compose run --rm monitoring-api \
 up{job="polygate-gateway"}
 sum(polygate_requests_total)
 sum by (outcome) (polygate_requests_total)
+polygate:gateway_service_error_ratio:rate5m
+polygate:gateway_client_rejection_ratio:rate5m
+polygate:gateway_cancellation_ratio:rate5m
 sum by (result) (polygate_cache_requests_total)
 sum by (provider, outcome) (polygate_provider_requests_total)
+polygate_circuit_state
 sum by (provider, direction) (polygate_tokens_total)
 sum(polygate_estimated_cost_usd_total)
 ```

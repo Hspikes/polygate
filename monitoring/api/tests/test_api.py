@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app, get_prometheus
 from app.prometheus import PrometheusError, Sample
+from app.service import overview_queries
 
 
 def sample(value: float, **labels: str) -> Sample:
@@ -40,6 +41,8 @@ class FakePrometheus:
                 "requests_total": [],
                 "request_rate": [],
                 "error_rate": [],
+                "client_rejection_rate": [],
+                "cancellation_rate": [],
                 "request_p95": [],
                 "cache_total": [],
                 "cache_hit_rate": [],
@@ -59,6 +62,8 @@ class FakePrometheus:
             "requests_total": [sample(42)],
             "request_rate": [sample(0.5)],
             "error_rate": [sample(0.1)],
+            "client_rejection_rate": [sample(0.2)],
+            "cancellation_rate": [sample(0.05)],
             "request_p95": [sample(420)],
             "cache_total": [sample(42)],
             "cache_hit_rate": [sample(0.25)],
@@ -121,6 +126,9 @@ class MonitoringApiTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["window"], "15m")
         self.assertEqual(body["gateway"]["requests_total"], 42)
+        self.assertEqual(body["gateway"]["error_rate"], 0.1)
+        self.assertEqual(body["gateway"]["client_rejection_rate"], 0.2)
+        self.assertEqual(body["gateway"]["cancellation_rate"], 0.05)
         self.assertEqual(body["gateway"]["p95_latency_ms"], 420)
         self.assertEqual(body["cache"]["hit_rate"], 0.25)
         self.assertEqual(body["usage"]["input_tokens"], 1200)
@@ -148,6 +156,8 @@ class MonitoringApiTest(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["gateway"]["requests_total"], 0)
         self.assertIsNone(body["gateway"]["error_rate"])
+        self.assertIsNone(body["gateway"]["client_rejection_rate"])
+        self.assertIsNone(body["gateway"]["cancellation_rate"])
         self.assertIsNone(body["gateway"]["p95_latency_ms"])
         self.assertIsNone(body["cache"]["hit_rate"])
         self.assertEqual(body["providers"], [])
@@ -206,6 +216,30 @@ class MonitoringApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 502)
         self.assertIn("forced query failure", response.json()["detail"])
+
+    def test_overview_queries_keep_client_outcomes_out_of_service_sli(self):
+        queries = overview_queries("15m")
+
+        self.assertIn(
+            'outcome=~"routing_error|provider_error|provider_timeout|server_error|partial_error"',
+            queries["error_rate"],
+        )
+        self.assertIn(
+            'outcome!~"client_error|cancelled"',
+            queries["error_rate"],
+        )
+        self.assertIn(
+            'outcome="client_error"',
+            queries["client_rejection_rate"],
+        )
+        self.assertIn(
+            'outcome="cancelled"',
+            queries["cancellation_rate"],
+        )
+        self.assertIn(
+            'outcome!="cancelled"',
+            queries["provider_success_rate"],
+        )
 
     def test_local_frontend_origin_is_allowed(self):
         with TestClient(app) as client:
