@@ -108,7 +108,7 @@ def create_app(store: AutomationStore | None = None) -> FastAPI:
     def list_templates() -> list[TemplateDefinition]:
         return list(TEMPLATES)
 
-    @app.post("/v1/requests/preview", response_model=PreviewResponse)
+    @app.post("/v1/requests/preview", response_model=PreviewResponse, response_model_exclude_none=True)
     def preview(intent: AutomationIntent) -> PreviewResponse:
         compiled = _compile_preview(intent)
         persistence.save_preview(compiled)

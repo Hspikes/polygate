@@ -1,0 +1,108 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://polygate.local/contracts/policy.schema.json",
+  "title": "PolyGate Policy Draft v1",
+  "description": "Administrator-editable routing and scheduling policy. Guardrails (privacy_high_internal_only, finance_privacy, require_provider_capability_match, reject_unknown_provider, admin_auth_required) are server-fixed and intentionally NOT part of this draft.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "gateway", "automation"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assumed_output_tokens", "balanced_price_tolerance", "budget_mode", "latency_mode", "high_quality_strategy"],
+      "properties": {
+        "assumed_output_tokens": { "type": "integer", "minimum": 1, "maximum": 32768 },
+        "balanced_price_tolerance": { "type": "number", "minimum": 0, "maximum": 2 },
+        "budget_mode": { "type": "string", "enum": ["soft", "hard"] },
+        "latency_mode": { "type": "string", "enum": ["soft", "hard"] },
+        "high_quality_strategy": { "type": "string", "enum": ["prefer_real", "lowest_cost"] }
+      }
+    },
+    "automation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["urgency_scores", "scenarios", "queue"],
+      "properties": {
+        "urgency_scores": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["critical", "high", "normal", "low"],
+          "description": "Cross-field constraint critical > high > normal > low is NOT expressible in draft-07 and is enforced by the Pydantic validator + contract tests.",
+          "properties": {
+            "critical": { "type": "integer", "minimum": 0, "maximum": 1000 },
+            "high": { "type": "integer", "minimum": 0, "maximum": 1000 },
+            "normal": { "type": "integer", "minimum": 0, "maximum": 1000 },
+            "low": { "type": "integer", "minimum": 0, "maximum": 1000 }
+          }
+        },
+        "scenarios": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["production_incident", "customer_escalation", "finance_summary", "marketing_batch"],
+          "properties": {
+            "production_incident": { "$ref": "#/definitions/scenario" },
+            "customer_escalation": { "$ref": "#/definitions/scenario" },
+            "finance_summary": { "$ref": "#/definitions/scenario_finance" },
+            "marketing_batch": { "$ref": "#/definitions/scenario" }
+          }
+        },
+        "queue": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["waiting_bonus_interval_seconds", "waiting_bonus_points", "waiting_bonus_cap", "starvation_streak_threshold", "starvation_wait_seconds"],
+          "properties": {
+            "waiting_bonus_interval_seconds": { "type": "integer", "minimum": 1, "maximum": 3600 },
+            "waiting_bonus_points": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "waiting_bonus_cap": { "type": "integer", "minimum": 0, "maximum": 1000 },
+            "starvation_streak_threshold": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "starvation_wait_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quality", "privacy", "max_cost_usd", "latency_target_ms"],
+      "properties": {
+        "quality": { "type": "string", "enum": ["balanced", "high", "cheap"] },
+        "privacy": { "type": "string", "enum": ["standard", "high"] },
+        "max_cost_usd": { "type": "number", "minimum": 0, "maximum": 10 },
+        "latency_target_ms": { "type": "integer", "minimum": 1, "maximum": 120000 }
+      }
+    },
+    "defaults_finance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quality", "privacy", "max_cost_usd", "latency_target_ms"],
+      "properties": {
+        "quality": { "type": "string", "enum": ["balanced", "high", "cheap"] },
+        "privacy": { "const": "high" },
+        "max_cost_usd": { "type": "number", "minimum": 0, "maximum": 10 },
+        "latency_target_ms": { "type": "integer", "minimum": 1, "maximum": 120000 }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["weight", "defaults"],
+      "properties": {
+        "weight": { "type": "integer", "minimum": 0, "maximum": 500 },
+        "defaults": { "$ref": "#/definitions/defaults" }
+      }
+    },
+    "scenario_finance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["weight", "defaults"],
+      "properties": {
+        "weight": { "type": "integer", "minimum": 0, "maximum": 500 },
+        "defaults": { "$ref": "#/definitions/defaults_finance" }
+      }
+    }
+  }
+}
