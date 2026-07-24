@@ -93,6 +93,19 @@ else
   bad "Overview response is missing required fields"
 fi
 
+if echo "$OVERVIEW" | python3 -c '
+import json
+import sys
+
+gateway = json.load(sys.stdin).get("gateway", {})
+required = {"error_rate", "client_rejection_rate", "cancellation_rate"}
+raise SystemExit(0 if required.issubset(gateway) else 1)
+'; then
+  ok "Overview separates service errors, client rejection, and cancellation"
+else
+  bad "Overview is missing separated Gateway SLI fields"
+fi
+
 WARMUP_HTTP_CODE="$(send_gateway_request)"
 if [ "$WARMUP_HTTP_CODE" = "200" ]; then
   ok "Gateway accepted the warm-up request"

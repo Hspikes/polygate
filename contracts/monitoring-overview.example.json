@@ -5,6 +5,8 @@
     "requests_total": 25,
     "requests_per_second": 0.12,
     "error_rate": 0.04,
+    "client_rejection_rate": 0.08,
+    "cancellation_rate": 0.02,
     "p95_latency_ms": 420.0
   },
   "cache": {

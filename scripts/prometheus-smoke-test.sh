@@ -73,6 +73,12 @@ else
   bad "Gateway metrics endpoint is unavailable or missing PolyGate metrics"
 fi
 
+if curl -fsS "$GATEWAY/metrics" | grep -q "polygate_circuit_state"; then
+  ok "Gateway exposes low-cardinality circuit state metrics"
+else
+  bad "Gateway circuit state metrics are missing"
+fi
+
 UP_VALUE=0
 for _ in $(seq 1 15); do
   UP_VALUE="$(query 'up{job="polygate-gateway"}' 2>/dev/null | query_value 2>/dev/null || echo 0)"

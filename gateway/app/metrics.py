@@ -4,7 +4,7 @@ Keep labels low-cardinality: provider names and a small, fixed set of outcomes
 are safe; request IDs, prompts, reasons, and raw error messages belong in logs.
 """
 
-from prometheus_client import Counter, Histogram, generate_latest
+from prometheus_client import Counter, Gauge, Histogram, generate_latest
 
 
 REQUESTS = Counter(
@@ -44,6 +44,12 @@ ESTIMATED_COST = Counter(
     "Estimated USD cost of successful provider calls.",
     ["provider"],
 )
+CIRCUIT_STATE = Gauge(
+    "polygate_circuit_state",
+    "Provider circuit breaker state as a one-hot gauge.",
+    ["provider", "state"],
+)
+CIRCUIT_STATES = ("closed", "open", "half_open")
 
 
 def record_request(outcome: str, duration_seconds: float) -> None:
@@ -75,6 +81,14 @@ def record_usage(
     ESTIMATED_COST.labels(provider=provider).inc(estimated_cost_usd)
 
 
-def render_metrics() -> bytes:
+def render_metrics(
+    provider_circuit_states: dict[str, str] | None = None,
+) -> bytes:
     """Return the current registry in Prometheus' text exposition format."""
+    if provider_circuit_states is not None:
+        for provider, current_state in provider_circuit_states.items():
+            for state in CIRCUIT_STATES:
+                CIRCUIT_STATE.labels(provider=provider, state=state).set(
+                    1 if state == current_state else 0
+                )
     return generate_latest()

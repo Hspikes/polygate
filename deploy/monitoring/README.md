@@ -13,7 +13,8 @@ of these Kubernetes manifests because Grafana queries Prometheus directly.
 
 ## What is deployed
 
-- Prometheus discovers and scrapes every Gateway Pod separately.
+- Prometheus discovers and scrapes every Gateway Pod separately and loads the
+  version-controlled SLI recording and alert rules.
 - Prometheus reads Gateway container CPU and memory through the authenticated
   Kubernetes API proxy to each node's kubelet.
 - A restricted kube-state-metrics instance exposes only Pod, Deployment, and
@@ -88,6 +89,7 @@ kubectl port-forward service/grafana 3000:3000
 Open:
 
 - Prometheus targets: <http://localhost:9090/targets>
+- Prometheus alerts: <http://localhost:9090/alerts>
 - Grafana: <http://localhost:3000>
 
 In another terminal, verify the complete deployed path without printing the

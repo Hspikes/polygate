@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from prometheus_client.parser import text_string_to_metric_families
 
@@ -13,6 +13,8 @@ os.environ["REDIS_URL"] = "redis://127.0.0.1:1/0"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app.adapters import OpenedProviderStream  # noqa: E402
+from app.circuit_breaker import CircuitBreakerRegistry  # noqa: E402
 from app.main import CACHE, app  # noqa: E402
 
 
@@ -29,6 +31,18 @@ def metric_value(name: str, labels: dict[str, str]) -> float:
     return 0.0
 
 
+def metric_total(name: str, labels: dict[str, str]) -> float:
+    response = client.get("/metrics")
+    response.raise_for_status()
+    return sum(
+        float(sample.value)
+        for family in text_string_to_metric_families(response.text)
+        for sample in family.samples
+        if sample.name == name
+        and all(sample.labels.get(key) == value for key, value in labels.items())
+    )
+
+
 class GatewayMetricsTest(unittest.TestCase):
     def test_metrics_endpoint_uses_prometheus_text_format(self):
         response = client.get("/metrics")
@@ -37,6 +51,94 @@ class GatewayMetricsTest(unittest.TestCase):
         self.assertTrue(response.headers["content-type"].startswith("text/plain"))
         self.assertIn("# HELP polygate_requests_total", response.text)
         self.assertIn("# HELP polygate_provider_duration_seconds", response.text)
+
+    def test_metrics_expose_one_hot_provider_circuit_state(self):
+        breaker = CircuitBreakerRegistry(failure_threshold=1)
+        with patch("app.main.BREAKER", breaker):
+            closed = client.get("/metrics").text
+            breaker.record_failure("mock-a")
+            opened = client.get("/metrics").text
+
+        self.assertIn(
+            'polygate_circuit_state{provider="mock-a",state="closed"} 1.0',
+            closed,
+        )
+        self.assertIn(
+            'polygate_circuit_state{provider="mock-a",state="open"} 1.0',
+            opened,
+        )
+        self.assertIn(
+            'polygate_circuit_state{provider="mock-a",state="closed"} 0.0',
+            opened,
+        )
+
+    def test_client_cancelled_stream_is_not_a_provider_error(self):
+        async def remaining():
+            yield b"data: [DONE]\n\n"
+
+        opened = OpenedProviderStream(
+            response=None,
+            first_event=(
+                b'data: {"choices":[{"delta":{"content":"partial"},'
+                b'"finish_reason":null}]}\n\n'
+            ),
+            remaining_events=remaining(),
+            latency_to_first_event_ms=1,
+        )
+        request_cancelled_before = metric_total(
+            "polygate_requests_total",
+            {"outcome": "cancelled"},
+        )
+        provider_cancelled_before = metric_total(
+            "polygate_provider_requests_total",
+            {"outcome": "cancelled"},
+        )
+        provider_error_before = metric_total(
+            "polygate_provider_requests_total",
+            {"outcome": "error"},
+        )
+
+        with (
+            patch(
+                "app.main.open_provider_stream_with_resilience",
+                AsyncMock(return_value=opened),
+            ),
+            patch(
+                "starlette.requests.Request.is_disconnected",
+                AsyncMock(return_value=True),
+            ),
+        ):
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "auto",
+                    "messages": [{"role": "user", "content": "cancel me"}],
+                    "stream": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            metric_total(
+                "polygate_requests_total",
+                {"outcome": "cancelled"},
+            ),
+            request_cancelled_before + 1,
+        )
+        self.assertEqual(
+            metric_total(
+                "polygate_provider_requests_total",
+                {"outcome": "cancelled"},
+            ),
+            provider_cancelled_before + 1,
+        )
+        self.assertEqual(
+            metric_total(
+                "polygate_provider_requests_total",
+                {"outcome": "error"},
+            ),
+            provider_error_before,
+        )
 
     def test_successful_request_updates_business_metrics(self):
         request_before = metric_value(
@@ -297,6 +399,3 @@ class GatewayMetricsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-

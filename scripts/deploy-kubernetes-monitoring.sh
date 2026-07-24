@@ -47,10 +47,13 @@ fi
 echo "Using Kubernetes context: $(kubectl config current-context)"
 echo "Updating version-controlled monitoring ConfigMaps"
 
-apply_file_configmap \
-  polygate-prometheus-config \
-  prometheus.yml \
-  "$ROOT_DIR/monitoring/prometheus/prometheus-kubernetes.yml"
+kubectl create configmap polygate-prometheus-config \
+  --namespace "$NAMESPACE" \
+  --from-file="prometheus.yml=$ROOT_DIR/monitoring/prometheus/prometheus-kubernetes.yml" \
+  --from-file="polygate-rules.yml=$ROOT_DIR/monitoring/prometheus/polygate-rules.yml" \
+  --dry-run=client \
+  --output=yaml \
+  | kubectl apply --filename=-
 apply_file_configmap \
   polygate-grafana-datasource \
   prometheus.yml \
