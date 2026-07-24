@@ -22,6 +22,7 @@
 | 12 | `policy.schema.json` | Policy Draft v1（可调路由/调度参数，guardrails 不在内） | A | B 校验、Gateway/Worker 加载、D 编辑器 |
 | 13 | `policy-store.schema.json` | 持久化的策略版本记录（version/status/change_note/rollback_from/policy） | A | B 存储、C 监控 |
 | 14 | `policy-examples.json` | Policy draft / stored version / active response 联调示例 | A | B/C/D、测试脚本 |
+
 ## 契约 #11：Decision Record v1
 
 `GET /v1/decisions/{request_id}` 使用与 Chat Completions 相同的 Bearer 鉴权，返回一次
@@ -64,9 +65,9 @@ Policy 管理相关的 Prometheus 指标名在此固定，不得随实现改动�
 | 指标名 | 类型 | 暴露方 | 含义 |
 |---|---|---|---|
 | `polygate_policy_active_version` | Gauge | Policy API | 控制面当前 active 策略版本号 |
-| `polygate_policy_loaded_version{component}` | Gauge | Gateway / Worker | 各组件当前已加载的策略版本号；`component=gateway|worker` |
+| `polygate_policy_loaded_version{component}` | Gauge | Gateway / Worker | 各组件当前已加载的策略版本号；`component="gateway"` 或 `component="automation-worker"`（固定字符串，Grafana 按这两个值分别查询） |
 | `polygate_policy_publications_total{action,result}` | Counter | Policy API | 策略发布/回滚次数；`action=publish|rollback`，`result=success|rejected|degraded` |
-| `polygate_policy_reload_failures_total{component,reason}` | Counter | Gateway / Worker | 拉取或校验新策略失败、继续使用 Last Known Good 的次数；`component=gateway|worker` |
+| `polygate_policy_reload_failures_total{component,reason}` | Counter | Gateway / Worker | 拉取或校验新策略失败、继续使用 Last Known Good 的次数；`component="gateway"` 或 `component="automation-worker"`；`reason=network|http|validation|file` |
 | `polygate_policy_last_publish_timestamp_seconds` | Gauge | Policy API | 最近一次成功发布的 Unix 时间戳 |
 
 > 版本一致性判据：若 `polygate_policy_active_version` 与任一组件的
