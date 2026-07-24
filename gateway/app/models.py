@@ -148,8 +148,8 @@ class GatewayRequest(BaseModel):
 
 
 class Tokens(BaseModel):
-    input: int
-    output: int
+    input: int = Field(ge=0)
+    output: int = Field(ge=0)
 
 
 class DecisionCard(BaseModel):
