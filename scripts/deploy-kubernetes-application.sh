@@ -56,6 +56,34 @@ if [ "$INCLUDE_AUTOMATION" = "1" ] \
   exit 1
 fi
 
+GATEWAY_CLIENT_SECRET="gateway-client-secrets"
+if ! GATEWAY_CLIENT_SECRET_KEYS="$(
+  kubectl get secret "$GATEWAY_CLIENT_SECRET" \
+    --namespace "$NAMESPACE" \
+    --output=go-template='{{range $key, $value := .data}}{{printf "%s\n" $key}}{{end}}'
+)"; then
+  echo "Missing Secret $NAMESPACE/$GATEWAY_CLIENT_SECRET." >&2
+  echo "Create it with api-keys and web-api-key before deployment." >&2
+  if [ "$INCLUDE_AUTOMATION" = "1" ]; then
+    echo "INCLUDE_AUTOMATION=1 also requires worker-api-key." >&2
+  fi
+  exit 1
+fi
+
+required_gateway_secret_keys=(api-keys web-api-key)
+if [ "$INCLUDE_AUTOMATION" = "1" ]; then
+  required_gateway_secret_keys+=(worker-api-key)
+fi
+
+for secret_key in "${required_gateway_secret_keys[@]}"; do
+  if ! grep -Fxq -- "$secret_key" <<<"$GATEWAY_CLIENT_SECRET_KEYS"; then
+    echo \
+      "Secret $NAMESPACE/$GATEWAY_CLIENT_SECRET is missing required key: $secret_key" \
+      >&2
+    exit 1
+  fi
+done
+
 echo "Using Kubernetes context: $(kubectl config current-context)"
 echo "Deploying Gateway image: $GATEWAY_IMAGE"
 echo "Deploying Mock image:    $MOCK_IMAGE"

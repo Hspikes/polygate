@@ -291,6 +291,9 @@ require_text \
 require_text \
   "$ROOT_DIR/scripts/kubernetes-monitoring-preflight.sh" \
   '"$ROOT_DIR/deploy/automation.yaml"'
+require_text \
+  "$ROOT_DIR/scripts/kubernetes-monitoring-preflight.sh" \
+  '"$ROOT_DIR/scripts/tests/test-deployment-secrets.sh"'
 
 for file in \
   "$ROOT_DIR/deploy/automation.yaml" \
