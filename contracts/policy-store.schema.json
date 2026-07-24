@@ -1,35 +1,54 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://polygate.local/contracts/policy-store.schema.json",
-  "title": "PolyGate Stored Policy Version",
-  "description": "A single persisted policy version record. The ConfigMap keeps the active version plus the most recent 20 full version records. The nested 'policy' object is validated separately against policy.schema.json.",
+  "title": "PolyGate Policy Store (ConfigMap document)",
+  "description": "The complete persisted policy document written to / mounted from the polygate-routing-policy ConfigMap. Holds the active version pointer plus the most recent 20 full version records.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "status", "created_at", "created_by", "change_note", "rollback_from", "policy"],
+  "required": ["active_version", "versions"],
   "properties": {
-    "version": {
+    "active_version": {
       "type": "integer",
       "minimum": 1,
-      "description": "Monotonically increasing version number. Never reused, even on rollback."
+      "description": "Version number of the currently active policy. Must match the version of exactly one record in 'versions' whose status is 'active'."
     },
-    "status": {
-      "type": "string",
-      "enum": ["active", "historical"]
-    },
-    "created_at": { "type": "string", "format": "date-time" },
-    "created_by": { "type": "string", "minLength": 1 },
-    "change_note": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Required audit note describing the change."
-    },
-    "rollback_from": {
-      "type": ["integer", "null"],
-      "description": "If produced by a rollback, the version number it copied content from; otherwise null."
-    },
-    "policy": {
+    "versions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "description": "Full version records, newest kept up to 20. When a 21st is published the oldest non-active record is dropped.",
+      "items": { "$ref": "#/definitions/version_record" }
+    }
+  },
+  "definitions": {
+    "version_record": {
       "type": "object",
-      "description": "Full PolicyDraft content; validated separately against policy.schema.json."
+      "additionalProperties": false,
+      "required": ["version", "status", "created_at", "created_by", "change_note", "rollback_from", "policy"],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Monotonically increasing version number. Never reused, even on rollback."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "archived"]
+        },
+        "created_at": { "type": "string", "format": "date-time" },
+        "created_by": { "type": "string", "minLength": 1 },
+        "change_note": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required audit note describing the change."
+        },
+        "rollback_from": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "If produced by a rollback, the version number it copied content from; otherwise null."
+        },
+        "policy": { "$ref": "policy.schema.json" }
+      }
     }
   }
 }
