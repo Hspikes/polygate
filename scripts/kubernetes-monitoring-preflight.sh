@@ -36,6 +36,9 @@ echo "PolyGate Kubernetes monitoring preflight"
 bash "$ROOT_DIR/scripts/tests/test-deployment-secrets.sh"
 ok "Application deployment validates required Secret keys before mutation"
 
+bash "$ROOT_DIR/scripts/tests/test-deployment-policy.sh"
+ok "Policy deployment preserves history and least privilege"
+
 kubectl kustomize "$MANIFEST_DIR" >/dev/null
 ok "Kustomize renders the monitoring resources without a cluster"
 
@@ -45,6 +48,7 @@ for manifest in \
   "$ROOT_DIR/deploy/gateway.yaml" \
   "$ROOT_DIR/deploy/web.yaml" \
   "$ROOT_DIR/deploy/automation.yaml" \
+  "$ROOT_DIR/deploy/policy-rbac.yaml" \
   "$ROOT_DIR/deploy/hpa.yaml"; do
   docker run --rm --interactive "$KUBECONFORM_IMAGE" \
     -strict \

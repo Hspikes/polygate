@@ -123,6 +123,52 @@ GRAFANA_PASSWORD=<当前管理员密码> INCLUDE_AUTOMATION=1 \
 Automation 面板。Automation API、Worker 和监控均保持集群内部访问，不增加
 NodePort 或 LoadBalancer。
 
+## C3 Policy Control Plane 接线
+
+Policy v1 使用 `polygate-routing-policy` ConfigMap 保存 active version 和最多
+20 个完整版本。部署脚本只会在 ConfigMap 不存在时，从
+`contracts/policy-examples.json["store"]` 创建初始版本；已经存在时会明确输出
+`Preserving existing ... version history`，不会用仓库默认值覆盖管理员发布历史。
+
+Automation 是唯一允许更新该 ConfigMap 的控制面。它使用
+`polygate-policy-controller` ServiceAccount，RBAC 只允许对
+`polygate-routing-policy` 执行 `get` 和 `update`，不能读取 Secret、列举
+ConfigMap 或修改其他 Kubernetes 资源。Gateway 和 Worker 保持无写权限，只挂载
+只读 Policy Store，并通过私有 Automation Service 每 5 秒刷新。
+
+首次启用 Automation 前创建独立管理密钥：
+
+```bash
+read -rsp "Policy admin key: " POLICY_ADMIN_KEY
+printf "\n"
+
+kubectl create secret generic polygate-policy-admin \
+  --namespace default \
+  --from-literal=admin-key="$POLICY_ADMIN_KEY" \
+  --dry-run=client \
+  --output=yaml \
+  | kubectl apply --filename=-
+
+unset POLICY_ADMIN_KEY
+```
+
+Kubernetes 只通过只读文件
+`/var/run/secrets/polygate-policy/admin-key` 向 Automation 提供密钥，不设置明文
+`POLICY_ADMIN_KEY` 环境变量。`INCLUDE_AUTOMATION=1` 时，如果 Secret 或
+`admin-key` 缺失，部署脚本会在任何资源变更前退出。
+
+本地 `docker compose up --build` 会先运行一次 `policy-bootstrap`，将冻结契约中的
+默认 store 写入私有 named volume，再以只读方式挂载到 Gateway、Automation 和
+Worker。仅本地 Compose 显式允许开发密钥：
+
+```text
+POLICY_ADMIN_KEY=local-policy-admin-development
+POLICY_ALLOW_ENV_ADMIN_KEY=true
+```
+
+Automation 的本地 `8020` 端口只绑定 `127.0.0.1`，不会监听局域网网卡。这个明文
+开发值不得复制到 Kubernetes 清单、生产日志或浏览器代码。
+
 ## 部署顺序（第 4 天集成）
 
 使用和构建、推送时完全相同的标签：

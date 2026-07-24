@@ -6,6 +6,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ECR_REGISTRY="${ECR_REGISTRY:-356029564744.dkr.ecr.us-east-1.amazonaws.com}"
 INCLUDE_AUTOMATION="${INCLUDE_AUTOMATION:-0}"
+POLICY_CONFIGMAP="polygate-routing-policy"
+POLICY_ADMIN_SECRET="polygate-policy-admin"
 
 if [ "$INCLUDE_AUTOMATION" != "0" ] && [ "$INCLUDE_AUTOMATION" != "1" ]; then
   echo "INCLUDE_AUTOMATION must be 0 or 1." >&2
@@ -32,6 +34,7 @@ require_command() {
 }
 
 require_command kubectl
+require_command python3
 require_command sed
 
 if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9_.-]+$ ]]; then
@@ -84,6 +87,41 @@ for secret_key in "${required_gateway_secret_keys[@]}"; do
   fi
 done
 
+if [ "$INCLUDE_AUTOMATION" = "1" ]; then
+  if ! POLICY_ADMIN_SECRET_KEYS="$(
+    kubectl get secret "$POLICY_ADMIN_SECRET" \
+      --namespace "$NAMESPACE" \
+      --output=go-template='{{range $key, $value := .data}}{{printf "%s\n" $key}}{{end}}'
+  )"; then
+    echo "Missing Secret $NAMESPACE/$POLICY_ADMIN_SECRET." >&2
+    echo "Create it with admin-key before deploying Automation." >&2
+    exit 1
+  fi
+  if ! grep -Fxq -- "admin-key" <<<"$POLICY_ADMIN_SECRET_KEYS"; then
+    echo \
+      "Secret $NAMESPACE/$POLICY_ADMIN_SECRET is missing required key: admin-key" \
+      >&2
+    exit 1
+  fi
+  if ! POLICY_ADMIN_KEY_LENGTH="$(
+    kubectl get secret "$POLICY_ADMIN_SECRET" \
+      --namespace "$NAMESPACE" \
+      --output=go-template='{{len (index .data "admin-key")}}'
+  )"; then
+    echo \
+      "Unable to verify Secret $NAMESPACE/$POLICY_ADMIN_SECRET admin-key." \
+      >&2
+    exit 1
+  fi
+  if ! [[ "$POLICY_ADMIN_KEY_LENGTH" =~ ^[1-9][0-9]*$ ]]; then
+    echo \
+      "Secret $NAMESPACE/$POLICY_ADMIN_SECRET has an empty required key: admin-key" \
+      >&2
+    exit 1
+  fi
+  unset POLICY_ADMIN_KEY_LENGTH
+fi
+
 echo "Using Kubernetes context: $(kubectl config current-context)"
 echo "Deploying Gateway image: $GATEWAY_IMAGE"
 echo "Deploying Mock image:    $MOCK_IMAGE"
@@ -94,6 +132,22 @@ if ! kubectl get --raw \
   echo "Kubernetes Metrics API is unavailable; HPA cannot operate." >&2
   echo "Install or repair metrics-server before deployment." >&2
   exit 1
+fi
+
+POLICY_STORE_TMP="$(mktemp "${TMPDIR:-/tmp}/polygate-policy-store.XXXXXX")"
+trap 'rm -f "$POLICY_STORE_TMP"' EXIT
+
+if ! kubectl get configmap "$POLICY_CONFIGMAP" \
+  --namespace "$NAMESPACE" >/dev/null 2>&1; then
+  python3 "$ROOT_DIR/scripts/render-default-policy-store.py" \
+    "$ROOT_DIR/contracts/policy-examples.json" \
+    >"$POLICY_STORE_TMP"
+  kubectl create configmap "$POLICY_CONFIGMAP" \
+    --namespace "$NAMESPACE" \
+    --from-file="policy-store.json=$POLICY_STORE_TMP"
+  echo "Created initial polygate-routing-policy ConfigMap"
+else
+  echo "Preserving existing polygate-routing-policy ConfigMap and version history"
 fi
 
 kubectl apply \
@@ -114,6 +168,9 @@ sed "s#$PINNED_WEB_IMAGE#$WEB_IMAGE#g" \
 
 if [ "$INCLUDE_AUTOMATION" = "1" ]; then
   echo "Deploying Automation image: $AUTOMATION_IMAGE"
+  kubectl apply \
+    --namespace "$NAMESPACE" \
+    --filename "$ROOT_DIR/deploy/policy-rbac.yaml"
   sed "s#$PINNED_AUTOMATION_IMAGE#$AUTOMATION_IMAGE#g" \
     "$ROOT_DIR/deploy/automation.yaml" \
     | kubectl apply --namespace "$NAMESPACE" --filename=-
