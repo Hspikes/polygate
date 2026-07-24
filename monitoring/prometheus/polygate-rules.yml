@@ -1,0 +1,97 @@
+groups:
+  - name: polygate-sli-recording
+    interval: 30s
+    rules:
+      - record: polygate:gateway_service_requests:rate5m
+        expr: >-
+          sum(rate(polygate_requests_total{outcome!~"client_error|cancelled"}[5m]))
+      - record: polygate:gateway_service_errors:rate5m
+        expr: >-
+          sum(rate(polygate_requests_total{outcome=~"routing_error|provider_error|provider_timeout|server_error|partial_error"}[5m]))
+      - record: polygate:gateway_service_error_ratio:rate5m
+        expr: >-
+          (polygate:gateway_service_errors:rate5m or vector(0))
+          / polygate:gateway_service_requests:rate5m
+      - record: polygate:gateway_client_rejection_ratio:rate5m
+        expr: >-
+          (sum(rate(polygate_requests_total{outcome="client_error"}[5m])) or vector(0))
+          / sum(rate(polygate_requests_total[5m]))
+      - record: polygate:gateway_cancellation_ratio:rate5m
+        expr: >-
+          (sum(rate(polygate_requests_total{outcome="cancelled"}[5m])) or vector(0))
+          / sum(rate(polygate_requests_total[5m]))
+
+  - name: polygate-alerts
+    rules:
+      - alert: GatewayTargetDown
+        expr: max(up{job="polygate-gateway"}) == 0 or absent(up{job="polygate-gateway"})
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: PolyGate Gateway target is not scrapeable
+          description: >-
+            Prometheus has not observed a healthy polygate-gateway target for
+            at least one minute.
+
+      - alert: HighProviderErrorOrTimeoutRate
+        expr: polygate:gateway_service_error_ratio:rate5m > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: PolyGate service error rate is above 5%
+          description: >-
+            Routing, provider, timeout, partial-stream, or server failures have
+            exceeded 5% of service-eligible requests for two minutes.
+
+      - alert: GatewayP95LatencyAboveSLO
+        expr: >-
+          histogram_quantile(0.95,
+            sum by (le) (rate(polygate_request_duration_seconds_bucket[5m])))
+          > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: PolyGate Gateway P95 latency is above 3 seconds
+          description: >-
+            End-to-end P95 request latency has exceeded the demonstration SLO
+            for five minutes.
+
+      - alert: ProviderCircuitOpenTooLong
+        expr: polygate_circuit_state{state="open"} == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Provider circuit has remained open
+          description: >-
+            Provider {{ $labels.provider }} has remained unavailable for at
+            least five minutes.
+
+      - alert: GatewayPodRestarting
+        expr: >-
+          increase(kube_pod_container_status_restarts_total{namespace="default",container="gateway"}[10m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: A Gateway Pod has restarted
+          description: >-
+            Gateway container {{ $labels.pod }} restarted during the last ten
+            minutes.
+
+      - alert: GatewayHPAAtMaxReplicas
+        expr: >-
+          max(kube_horizontalpodautoscaler_status_desired_replicas{namespace="default",horizontalpodautoscaler="gateway-hpa"})
+          >=
+          max(kube_horizontalpodautoscaler_spec_max_replicas{namespace="default",horizontalpodautoscaler="gateway-hpa"})
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Gateway HPA is pinned at its maximum
+          description: >-
+            The Gateway HPA has requested its maximum replica count for ten
+            minutes; capacity or limits may need review.

@@ -155,7 +155,15 @@ def health():
 
 @app.get("/metrics", include_in_schema=False)
 def metrics():
-    return Response(content=render_metrics(), media_type=CONTENT_TYPE_LATEST)
+    breaker_states = BREAKER.state_snapshot()
+    provider_states = {
+        provider["name"]: breaker_states.get(provider["name"], "closed")
+        for provider in PROVIDERS
+    }
+    return Response(
+        content=render_metrics(provider_states),
+        media_type=CONTENT_TYPE_LATEST,
+    )
 
 
 @app.get("/providers")
@@ -480,6 +488,7 @@ async def _stream_response(
                 BREAKER.record_failure(chosen["name"])
             else:
                 BREAKER.record_cancelled(chosen["name"])
+                provider_outcome = "cancelled"
             duration = time.perf_counter() - provider_started
             record_provider(chosen["name"], provider_outcome, duration)
             if outcome == "success":

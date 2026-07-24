@@ -115,7 +115,10 @@ expected = (
     and len(panels) >= 20
     and any("polygate_requests_total" in expr for expr in expressions)
     and any("polygate_provider_requests_total" in expr for expr in expressions)
-    and any(".*_error" in expr for expr in expressions)
+    and any("provider_timeout" in expr for expr in expressions)
+    and any("client_error" in expr for expr in expressions)
+    and any("cancelled" in expr for expr in expressions)
+    and all(".*_error" not in expr for expr in expressions)
     and all("clamp_min" not in expr for expr in expressions)
     and any("container_cpu_usage_seconds_total" in expr for expr in expressions)
     and any("container_memory_working_set_bytes" in expr for expr in expressions)

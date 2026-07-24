@@ -31,7 +31,10 @@ curl http://localhost:8000/metrics
 
 每个 `POST /v1/chat/completions` 只计数一次。请求结果包括
 `success`、`cache_hit`、`client_error`、`routing_error`、
-`provider_error` 和未预期的 `server_error`。指标标签只包含 Provider
+`provider_error`、`cancelled`、`partial_error` 和未预期的 `server_error`。
+Provider 调用额外区分 `success`、`error` 和客户端主动触发的 `cancelled`，
+避免取消请求降低 Provider 成功率。`polygate_circuit_state{provider,state}`
+以 `closed`、`open`、`half_open` one-hot Gauge 暴露熔断状态。指标标签只包含 Provider
 和这些有限的结果类型；`request_id`、prompt、路由原因和原始错误文本
 继续写入日志，不进入指标标签。
 

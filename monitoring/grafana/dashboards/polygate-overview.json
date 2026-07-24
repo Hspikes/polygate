@@ -254,7 +254,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Share of client, routing, provider, and unexpected server errors among all requests.",
+      "description": "Share of routing, provider, timeout, partial-stream, and server failures among service-eligible requests. Client rejection and cancellation are excluded.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -318,14 +318,14 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(sum(rate(polygate_requests_total{outcome=~\".*_error\"}[$__rate_interval])) or vector(0)) / sum(rate(polygate_requests_total[$__rate_interval]))",
+          "expr": "(sum(rate(polygate_requests_total{outcome=~\"routing_error|provider_error|provider_timeout|server_error|partial_error\"}[$__rate_interval])) or vector(0)) / sum(rate(polygate_requests_total{outcome!~\"client_error|cancelled\"}[$__rate_interval]))",
           "instant": false,
-          "legendFormat": "Error rate",
+          "legendFormat": "Service error rate",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Error Rate",
+      "title": "Service Error Rate",
       "type": "stat"
     },
     {
@@ -1093,7 +1093,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (provider, le) (rate(polygate_provider_duration_seconds_bucket[$__rate_interval]))) * 1000",
+          "expr": "histogram_quantile(0.95, sum by (provider, le) (rate(polygate_provider_duration_seconds_bucket{outcome!=\"cancelled\"}[$__rate_interval]))) * 1000",
           "instant": false,
           "legendFormat": "{{provider}} P95",
           "range": true,
@@ -1108,7 +1108,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Successful provider calls divided by all provider calls.",
+      "description": "Successful provider calls divided by provider calls not cancelled by the client.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1198,7 +1198,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(sum by (provider) (rate(polygate_provider_requests_total{outcome=\"success\"}[$__rate_interval])) or on (provider) (0 * sum by (provider) (rate(polygate_provider_requests_total[$__rate_interval])))) / sum by (provider) (rate(polygate_provider_requests_total[$__rate_interval]))",
+          "expr": "(sum by (provider) (rate(polygate_provider_requests_total{outcome=\"success\"}[$__rate_interval])) or on (provider) (0 * sum by (provider) (rate(polygate_provider_requests_total{outcome!=\"cancelled\"}[$__rate_interval])))) / sum by (provider) (rate(polygate_provider_requests_total{outcome!=\"cancelled\"}[$__rate_interval]))",
           "instant": false,
           "legendFormat": "{{provider}}",
           "range": true,
@@ -2338,6 +2338,122 @@
       ],
       "title": "Automation Execution P95",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Share of all Gateway requests rejected because the client request or credentials were invalid. This does not reduce service availability.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 2,
+          "mappings": [],
+          "max": 1,
+          "min": 0,
+          "noValue": "N/A",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.05 },
+              { "color": "red", "value": 0.2 }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 68 },
+      "id": 30,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.4.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "(sum(rate(polygate_requests_total{outcome=\"client_error\"}[$__rate_interval])) or vector(0)) / sum(rate(polygate_requests_total[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "Client rejection rate",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Client Rejection Rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Share of all Gateway requests actively cancelled by the downstream client. Cancellation is tracked separately from service and Provider failures.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 2,
+          "mappings": [],
+          "max": 1,
+          "min": 0,
+          "noValue": "N/A",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.02 },
+              { "color": "red", "value": 0.1 }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 68 },
+      "id": 31,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.4.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "(sum(rate(polygate_requests_total{outcome=\"cancelled\"}[$__rate_interval])) or vector(0)) / sum(rate(polygate_requests_total[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "Cancellation rate",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Cancellation Rate",
+      "type": "stat"
     }
   ],
   "preload": false,
@@ -2375,6 +2491,6 @@
   "timezone": "browser",
   "title": "PolyGate Overview",
   "uid": "polygate-overview",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }
