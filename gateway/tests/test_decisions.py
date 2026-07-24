@@ -166,7 +166,7 @@ class DecisionApiTests(unittest.TestCase):
                 "connection reset",
                 request=httpx.Request("POST", "https://provider.example/v1/chat"),
             )
-            for _ in range(3)
+            for _ in range(5)
         ]
         result = AdapterResult(
             {
@@ -194,7 +194,7 @@ class DecisionApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(decision.status_code, 200)
-        self.assertEqual(decision.json()["retries"], 2)
+        self.assertEqual(decision.json()["retries"], 4)
         self.assertEqual(decision.json()["failover_count"], 1)
         self.assertEqual(
             decision.json()["failover_from"],
