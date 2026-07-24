@@ -4,6 +4,21 @@
 # Then open web/index.html in a browser (or serve web/ on :8080).
 # The monitoring dashboard is available at http://localhost:3000.
 services:
+  policy-bootstrap:
+    image: python:3.12-slim
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        python /bootstrap/render-default-policy-store.py
+        /contracts/policy-examples.json
+        > /policy/policy-store.json.tmp
+        && mv /policy/policy-store.json.tmp /policy/policy-store.json
+    volumes:
+      - ./scripts/render-default-policy-store.py:/bootstrap/render-default-policy-store.py:ro
+      - ./contracts/policy-examples.json:/contracts/policy-examples.json:ro
+      - policy-store:/policy
+
   redis:
     image: redis:7-alpine
     ports: ["6379:6379"]
@@ -20,10 +35,17 @@ services:
 
   gateway:
     build: ./gateway
-    depends_on: [redis, mock-a, mock-b]
+    depends_on:
+      redis: { condition: service_started }
+      mock-a: { condition: service_started }
+      mock-b: { condition: service_started }
+      policy-bootstrap: { condition: service_completed_successfully }
     environment:
       REDIS_URL: redis://redis:6379/0
       PROVIDERS_FILE: /app/providers.yaml
+      POLICY_FILE: /config/policy-store.json
+      POLICY_API_URL: http://automation:8020
+      POLICY_REFRESH_SECONDS: "5"
       REAL_A_API_KEY:  ${REAL_A_API_KEY}
       # Set this to require Bearer auth (for example: local-development).
       POLYGATE_API_KEYS: ${POLYGATE_API_KEYS:-}
@@ -38,16 +60,24 @@ services:
     ports: ["8000:8000"]
     volumes:
       - ./contracts/providers.yaml:/app/providers.yaml:ro
+      - policy-store:/config:ro
 
   automation:
     build:
       context: .
       dockerfile: automation/Dockerfile
-    depends_on: [gateway, redis]
+    depends_on:
+      gateway: { condition: service_started }
+      redis: { condition: service_started }
+      policy-bootstrap: { condition: service_completed_successfully }
     environment:
       GATEWAY_URL: http://gateway:8000
       AUTOMATION_REDIS_URL: redis://redis:6379/0
-    ports: ["8020:8020"]
+      POLICY_FILE: /config/policy-store.json
+      POLICY_ADMIN_KEY: local-policy-admin-development
+      POLICY_ALLOW_ENV_ADMIN_KEY: "true"
+      POLICY_REFRESH_SECONDS: "5"
+    ports: ["127.0.0.1:8020:8020"]
     healthcheck:
       test:
         - CMD
@@ -58,16 +88,25 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+    volumes:
+      - policy-store:/config:ro
 
   automation-worker:
     build:
       context: .
       dockerfile: automation/Dockerfile
     command: ["python", "-m", "automation.app.worker"]
-    depends_on: [gateway, redis]
+    depends_on:
+      gateway: { condition: service_started }
+      redis: { condition: service_started }
+      automation: { condition: service_healthy }
+      policy-bootstrap: { condition: service_completed_successfully }
     environment:
       GATEWAY_URL: http://gateway:8000
       AUTOMATION_REDIS_URL: redis://redis:6379/0
+      POLICY_FILE: /config/policy-store.json
+      POLICY_API_URL: http://automation:8020
+      POLICY_REFRESH_SECONDS: "5"
       POLYGATE_API_KEY: ""
     ports: ["9000:9000"]
     healthcheck:
@@ -78,6 +117,8 @@ services:
         - "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=2)"
       interval: 10s
     restart: unless-stopped
+    volumes:
+      - policy-store:/config:ro
 
   web:
     build: ./web
@@ -154,5 +195,6 @@ services:
       start_period: 20s
 
 volumes:
+  policy-store:
   prometheus-data:
   grafana-data:

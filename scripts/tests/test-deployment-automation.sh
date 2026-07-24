@@ -201,6 +201,21 @@ require_text \
   "$ROOT_DIR/deploy/automation.yaml" \
   "terminationGracePeriodSeconds: 60"
 require_text \
+  "$ROOT_DIR/deploy/automation.yaml" \
+  "serviceAccountName: polygate-policy-controller"
+require_text \
+  "$ROOT_DIR/deploy/automation.yaml" \
+  '{ name: POLICY_FILE, value: "/config/policy-store.json" }'
+require_text \
+  "$ROOT_DIR/deploy/automation.yaml" \
+  '{ name: POLICY_API_URL, value: "http://automation:8020" }'
+require_text \
+  "$ROOT_DIR/deploy/gateway.yaml" \
+  '{ name: POLICY_API_URL, value: "http://automation:8020" }'
+require_text \
+  "$ROOT_DIR/scripts/deploy-kubernetes-application.sh" \
+  "Preserving existing polygate-routing-policy ConfigMap and version history"
+require_text \
   "$ROOT_DIR/scripts/deploy-kubernetes-application.sh" \
   'deployments+=(automation automation-worker)'
 require_text \
