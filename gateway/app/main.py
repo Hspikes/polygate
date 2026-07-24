@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from datetime import UTC, datetime, timedelta
 import json
 import logging
 import os
@@ -11,7 +12,7 @@ import uuid
 from typing import Any, AsyncIterator
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Path, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -28,6 +29,12 @@ from app.auth import require_client_api_key
 from app.cache import Cache, cache_key
 from app.circuit_breaker import CircuitBreakerRegistry
 from app.cost import estimate_cost
+from app.decisions import (
+    REQUEST_ID_PATTERN,
+    DecisionRecord,
+    DecisionStore,
+    DecisionStoreUnavailable,
+)
 from app.health_checker import health_check_loop
 from app.metrics import (
     record_budget_exhausted,
@@ -78,6 +85,7 @@ if CORS_ALLOW_ORIGINS:
 PROVIDERS = load_providers()
 BREAKER = CircuitBreakerRegistry()
 CACHE = Cache()
+DECISIONS = DecisionStore(CACHE)
 RELIABILITY = ResilienceSettings.from_env()
 _HEALTH_TASK: asyncio.Task | None = None
 
@@ -236,6 +244,59 @@ def models(_authenticated: None = Depends(require_client_api_key)):
     }
 
 
+@app.get("/v1/decisions/{request_id}", response_model=DecisionRecord)
+def get_decision_record(
+    request_id: str = Path(pattern=REQUEST_ID_PATTERN),
+    _authenticated: None = Depends(require_client_api_key),
+):
+    try:
+        record = DECISIONS.get(request_id)
+    except DecisionStoreUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="decision record store unavailable",
+        ) from exc
+    if record is None:
+        raise HTTPException(status_code=404, detail="decision record not found")
+    return record
+
+
+def _decision_record(
+    card: DecisionCard,
+    *,
+    outcome: str,
+    initial_provider: str,
+    stream: bool,
+    failover_count: int,
+) -> DecisionRecord:
+    created_at = datetime.now(UTC)
+    return DecisionRecord(
+        request_id=card.request_id,
+        outcome=outcome,
+        chosen_provider=card.chosen_provider,
+        initial_provider=initial_provider,
+        reason=card.reason,
+        cache_hit=card.cache_hit,
+        stream=stream,
+        cost_estimate_usd=card.cost_estimate_usd,
+        latency_ms=card.latency_ms,
+        tokens=card.tokens,
+        retries=card.retries,
+        failover_from=card.failover_from,
+        failover_count=failover_count,
+        created_at=created_at,
+        expires_at=created_at + timedelta(seconds=DECISIONS.ttl_seconds),
+    )
+
+
+def _save_decision(record: DecisionRecord) -> None:
+    if not DECISIONS.save(record):
+        log.warning(
+            '{"request_id":"%s","event":"decision_record_write_skipped"}',
+            record.request_id,
+        )
+
+
 def _forced_provider(req: GatewayRequest, required_capabilities: set[str]) -> dict | None:
     if req.model == "auto":
         return None
@@ -336,6 +397,15 @@ async def chat_completions(
                 tokens=Tokens(**cached["tokens"]),
                 request_id=request_id,
             )
+            _save_decision(
+                _decision_record(
+                    card,
+                    outcome="cache_hit",
+                    initial_provider="cache",
+                    stream=False,
+                    failover_count=0,
+                )
+            )
             return _cached_envelope(cached["answer"], card)
         record_cache("miss")
 
@@ -388,6 +458,15 @@ async def chat_completions(
         retries=result.retries,
         failover_from=tried_names[0] if len(tried_names) > 1 else None,
     )
+    _save_decision(
+        _decision_record(
+            card,
+            outcome="success",
+            initial_provider=tried_names[0],
+            stream=False,
+            failover_count=len(tried_names) - 1,
+        )
+    )
     record_usage(chosen["name"], result.input_tokens, result.output_tokens, cost)
     if key is not None and result.content and len(tried_names) == 1:
         CACHE.set(key, {"answer": result.content, "tokens": card.tokens.model_dump()})
@@ -415,6 +494,7 @@ async def _call_non_stream(
     deadline: float,
 ):
     tried_names: list[str] = []
+    failed_retries = 0
     while True:
         tried_names.append(chosen["name"])
         provider_started = time.perf_counter()
@@ -431,9 +511,11 @@ async def _call_non_stream(
                 deadline=deadline,
                 provider_call=call_provider,
             )
+            result.retries += failed_retries
             record_provider(chosen["name"], "success", time.perf_counter() - provider_started)
             return result, chosen, reason, tried_names
         except Exception as exc:
+            failed_retries += int(getattr(exc, "polygate_retries", 0))
             budget_exhausted = _request_budget_exhausted(exc, deadline)
             provider_timed_out = budget_exhausted or _provider_timed_out(exc)
             provider_outcome = "timeout" if provider_timed_out else "error"
@@ -511,6 +593,7 @@ async def _stream_response(
     deadline: float,
 ):
     tried_names: list[str] = []
+    failed_retries = 0
     while True:
         tried_names.append(chosen["name"])
         provider_started = time.perf_counter()
@@ -525,8 +608,10 @@ async def _stream_response(
                 max_backoff_s=RELIABILITY.retry_max_backoff_seconds,
                 deadline=deadline,
             )
+            opened.retries += failed_retries
             break
         except Exception as exc:
+            failed_retries += int(getattr(exc, "polygate_retries", 0))
             budget_exhausted = _request_budget_exhausted(exc, deadline)
             provider_timed_out = budget_exhausted or _provider_timed_out(exc)
             provider_outcome = "timeout" if provider_timed_out else "error"
@@ -646,8 +731,36 @@ async def _stream_response(
                     observation.output_tokens,
                     cost,
                 )
+            else:
+                cost = estimate_cost(
+                    chosen, observation.input_tokens, observation.output_tokens
+                )
             record_request(outcome, time.perf_counter() - started)
             record_stream(outcome)
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            card = DecisionCard(
+                chosen_provider=chosen["name"],
+                reason=reason,
+                cache_hit=False,
+                cost_estimate_usd=cost,
+                latency_ms=latency_ms,
+                tokens=Tokens(
+                    input=observation.input_tokens,
+                    output=observation.output_tokens,
+                ),
+                retries=opened.retries,
+                failover_from=tried_names[0] if len(tried_names) > 1 else None,
+                request_id=request_id,
+            )
+            _save_decision(
+                _decision_record(
+                    card,
+                    outcome=outcome,
+                    initial_provider=tried_names[0],
+                    stream=True,
+                    failover_count=len(tried_names) - 1,
+                )
+            )
             log.info(
                 '{"request_id":"%s","event":"stream_finished","provider":"%s","outcome":"%s","reason":%s}',
                 request_id,

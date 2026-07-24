@@ -99,7 +99,10 @@ class Cache:
             return None
         try:
             client = redis.Redis.from_url(
-                self._url, socket_connect_timeout=0.5, decode_responses=True
+                self._url,
+                socket_connect_timeout=0.5,
+                socket_timeout=0.5,
+                decode_responses=True,
             )
             client.ping()
         except Exception as e:

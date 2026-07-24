@@ -92,6 +92,7 @@ spec:
             - { name: PROVIDER_MAX_RETRIES, value: "2" }
             - { name: PROVIDER_RETRY_BASE_DELAY_SECONDS, value: "0.2" }
             - { name: PROVIDER_RETRY_MAX_BACKOFF_SECONDS, value: "5" }
+            - { name: DECISION_RECORD_TTL_SECONDS, value: "3600" }
             - name: REAL_A_API_KEY
               valueFrom: { secretKeyRef: { name: provider-secrets, key: real-a-key, optional: true } }
             - name: POLYGATE_API_KEYS

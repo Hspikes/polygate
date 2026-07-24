@@ -18,6 +18,17 @@
 | 8 | `automation-preview.schema.json` | 模板编译、优先级和代码预览 | A | D、Pi 插件 |
 | 9 | `automation-job.schema.json` | 异步 Job 状态和结果 | A/B | D、C 监控 |
 | 10 | `automation-examples.json` | Automation 三份契约的联调示例 | A/B | C/D、测试脚本 |
+| 11 | `decision-record.schema.json` + `.example.json` | 短 TTL 最终路由记录与查询响应 | Gateway | Web、Pi |
+
+## 契约 #11：Decision Record v1
+
+`GET /v1/decisions/{request_id}` 使用与 Chat Completions 相同的 Bearer 鉴权，返回一次
+已完成请求的最终 Provider、成本、tokens、重试、failover 和 outcome。记录默认只在
+Redis 保留 1 小时；过期返回 404，Redis 不可用返回 503。
+
+该记录是严格允许列表，不存储 prompt、消息、工具参数、Authorization、Provider API
+Key、上游 endpoint 或原始错误。标准 OpenAI SSE 保持不变；客户端从响应 Header 读取
+request ID，再独立查询本契约。
 
 ## 契约 #5：Adapter 统一响应格式
 
