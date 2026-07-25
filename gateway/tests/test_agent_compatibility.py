@@ -252,6 +252,13 @@ class AgentCompatibilityTests(unittest.TestCase):
         self.assertEqual(accepted.status_code, 200)
 
     def test_failover_result_is_not_written_to_the_exact_cache(self):
+        # 这个用例断言"failover 期间发生的 CACHE.set 只能是 decision record"。
+        # 但 DecisionStore.save() 在 CACHE.enabled 为假时直接返回，压根不会调
+        # CACHE.set，于是无 Redis 环境下前置断言会拿到空列表而误报失败。
+        # 与 test_cache_bypass / test_policy_cache_isolation 用同一套守卫。
+        if not CACHE.enabled:
+            self.skipTest("Redis 不可达，跳过缓存相关回归测试（请确认 docker compose up 已启动）")
+
         response_body = {
             "id": "chatcmpl-fallback-json",
             "object": "chat.completion",
