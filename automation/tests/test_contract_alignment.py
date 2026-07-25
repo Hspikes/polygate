@@ -208,6 +208,17 @@ class EnqueuedJobSerializationTests(unittest.TestCase):
         second = store.enqueue(preview, idempotency_key="same-key")
         self.assertEqual(first.job_id, second.job_id)
 
+    def test_idempotent_enqueue_preserves_submission_policy_version(self):
+        intent = AutomationIntent.model_validate(copy.deepcopy(EXAMPLES["intent"]))
+        preview = _compile_preview(intent, ACTIVE_POLICY)
+
+        store = InMemoryAutomationStore()
+        first = store.enqueue(preview, idempotency_key="policy-version-key")
+        second = store.enqueue(preview, idempotency_key="policy-version-key")
+
+        self.assertEqual(first.policy_version, ACTIVE_POLICY.version)
+        self.assertEqual(second.policy_version, ACTIVE_POLICY.version)
+
 class PolicyVersionFieldTests(unittest.TestCase):
     """policy_version 是新增的可选字段（Policy v1 契约），验证其可选行为。"""
 

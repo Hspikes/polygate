@@ -11,9 +11,10 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from automation.app.main import create_app
+from automation.app.kubernetes_policy_repository import KubernetesConfigMapPolicyRepository
 from automation.app.policy_auth import PolicyAdminAuthenticator
 from automation.app.policy_manager import HttpGatewaySimulator, PolicyManager
-from automation.app.policy_metrics import PUBLICATIONS
+from automation.app.policy_metrics import LAST_PUBLISH, PUBLICATIONS
 from automation.app.policy_models import PolicyStoreDocument
 from automation.app.policy_repository import InMemoryPolicyRepository, RepositoryUnavailable
 
@@ -159,6 +160,58 @@ def test_preview_uses_gateway_simulator_without_writing_repository(api):
     assert len(simulator.calls) == 2
 
 
+def test_preview_priority_uses_the_same_captured_active_snapshot_as_diff_and_routing():
+    class ActiveChangesAfterCaptureManager(PolicyManager):
+        def __init__(self, repository):
+            super().__init__(repository)
+            concurrent = self._active.model_copy(deep=True)
+            concurrent.version = 2
+            concurrent.policy.automation.urgency_scores.critical = 200
+            self.concurrent = concurrent
+            self.flip_on_next_active = False
+
+        @property
+        def active(self):
+            captured = super().active
+            if self.flip_on_next_active:
+                self._active = self.concurrent.model_copy(deep=True)
+                self.flip_on_next_active = False
+            return captured
+
+    manager = ActiveChangesAfterCaptureManager(InMemoryPolicyRepository(_store()))
+    app = create_app(
+        policy_manager=manager,
+        policy_authenticator=PolicyAdminAuthenticator("test-policy-admin"),
+        gateway_simulator=FakeGatewaySimulator(),
+    )
+    manager.flip_on_next_active = True
+    client = TestClient(app)
+    priority_case = {
+        "employee": "demo",
+        "department": "engineering",
+        "scenario": "production_incident",
+        "urgency": "critical",
+        "prompt": "simulate",
+        "preferences": {
+            "quality": "high",
+            "privacy": "high",
+            "max_cost_usd": 0.01,
+            "latency_target_ms": 1000,
+        },
+    }
+
+    response = client.post(
+        "/v1/admin/policies/preview",
+        headers=ADMIN_HEADERS,
+        json={"policy": EXAMPLES["draft"], "priority_cases": [priority_case]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["base_version"] == 1
+    assert response.json()["simulations"]["priority"][0]["before_score"] == 140
+    assert manager.active.version == 2
+
+
 def test_preview_forwards_a_gateway_compatible_agent_request_to_simulation():
     requests: list[dict] = []
 
@@ -221,6 +274,47 @@ def test_preview_forwards_a_gateway_compatible_agent_request_to_simulation():
     assert len(requests) == 2
     assert requests[0]["request"] == agent_case
     assert requests[0]["gateway_policy"] == EXAMPLES["draft"]["gateway"]
+
+
+def test_gateway_simulation_outage_maps_to_sanitized_service_unavailable():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(
+            "sensitive upstream connection detail",
+            request=request,
+        )
+
+    app = create_app(
+        policy_manager=PolicyManager(InMemoryPolicyRepository(_store())),
+        policy_authenticator=PolicyAdminAuthenticator("test-policy-admin"),
+        gateway_simulator=HttpGatewaySimulator(
+            "http://gateway.test",
+            client=httpx.Client(transport=httpx.MockTransport(handler)),
+        ),
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/v1/admin/policies/preview",
+        headers=ADMIN_HEADERS,
+        json={
+            "policy": EXAMPLES["draft"],
+            "gateway_cases": [
+                {
+                    "messages": [{"role": "user", "content": "simulate"}],
+                    "polygate": {
+                        "quality": "balanced",
+                        "privacy": "standard",
+                        "max_cost_usd": 0.01,
+                        "latency_target_ms": 1000,
+                    },
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "gateway simulation unavailable"}
+    assert "sensitive upstream connection detail" not in response.text
 
 
 def test_publish_detects_stale_base_version_and_rollback_creates_a_new_version(api):
@@ -288,6 +382,18 @@ def test_metrics_are_exposed_as_prometheus_text(api):
     assert "polygate_policy_active_version" in response.text
 
 
+def test_policy_metrics_initialize_last_publish_from_active_policy():
+    manager = PolicyManager(InMemoryPolicyRepository(_store()))
+
+    create_app(
+        policy_manager=manager,
+        policy_authenticator=PolicyAdminAuthenticator("test-policy-admin"),
+        gateway_simulator=FakeGatewaySimulator(),
+    )
+
+    assert LAST_PUBLISH._value.get() == manager.active.created_at.timestamp()
+
+
 def test_repository_unavailability_maps_to_service_unavailable():
     class RepositoryUnavailableAfterStartup(InMemoryPolicyRepository):
         def __init__(self, document):
@@ -312,6 +418,93 @@ def test_repository_unavailability_maps_to_service_unavailable():
     )
 
     assert client.get("/v1/admin/policies", headers=ADMIN_HEADERS).status_code == 503
+
+
+def test_unrecoverable_publish_reconciliation_marks_readiness_unavailable():
+    class CommitThenUnreadableRepository(InMemoryPolicyRepository):
+        def __init__(self, document):
+            super().__init__(document)
+            self.readable = True
+
+        def load(self):
+            if not self.readable:
+                raise RepositoryUnavailable("unreadable")
+            return super().load()
+
+        def compare_and_swap(self, document, expected_revision):
+            super().compare_and_swap(document, expected_revision)
+            self.readable = False
+            raise RepositoryUnavailable("response lost")
+
+    repository = CommitThenUnreadableRepository(_store())
+    manager = PolicyManager(repository)
+    with pytest.raises(RepositoryUnavailable):
+        manager.publish(
+            base_version=1,
+            draft=_store().active.policy,
+            change_note="ambiguous publish",
+            actor="policy-admin",
+        )
+    client = TestClient(
+        create_app(
+            policy_manager=manager,
+            policy_authenticator=PolicyAdminAuthenticator("test-policy-admin"),
+            gateway_simulator=FakeGatewaySimulator(),
+        )
+    )
+
+    response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "policy manager unavailable"}
+
+
+def test_rollback_repository_corruption_maps_to_service_unavailable_not_missing_version():
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "metadata": {"resourceVersion": "17"},
+                    "data": {"policy-store.json": _store().model_dump_json()},
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "metadata": {"resourceVersion": "18"},
+                "data": {"policy-store.json": "malformed-policy-document"},
+            },
+        )
+
+    repository = KubernetesConfigMapPolicyRepository(
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        namespace="default",
+        configmap_name="polygate-routing-policy",
+        configmap_key="policy-store.json",
+        api_server="https://kubernetes.default.svc",
+    )
+    client = TestClient(
+        create_app(
+            policy_manager=PolicyManager(repository),
+            policy_authenticator=PolicyAdminAuthenticator("test-policy-admin"),
+            gateway_simulator=FakeGatewaySimulator(),
+        ),
+        raise_server_exceptions=False,
+    )
+
+    response = client.post(
+        "/v1/admin/policies/1/rollback",
+        headers=ADMIN_HEADERS,
+        json={"base_version": 1, "change_note": "rollback"},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "policy repository unavailable"}
 
 
 def test_environment_admin_key_is_disabled_without_explicit_opt_in(monkeypatch):

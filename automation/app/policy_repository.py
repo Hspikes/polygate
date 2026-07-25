@@ -30,6 +30,14 @@ class RepositoryUnavailable(Exception):
     """持久化层暂时不可用，调用方可将其映射为服务不可用。"""
 
 
+class RepositoryCorrupt(RepositoryUnavailable):
+    """持久化状态或响应无法安全解析，且错误内容不得暴露策略值。"""
+
+
+class PolicyVersionNotFound(Exception):
+    """请求的历史策略版本不存在。"""
+
+
 @dataclass(frozen=True)
 class RepositorySnapshot:
     """一次读取的快照：文档内容 + 当时的 revision 戳。"""
@@ -56,13 +64,16 @@ class InMemoryPolicyRepository:
 
     def __init__(self, document: PolicyStoreDocument) -> None:
         self._lock = threading.Lock()
-        self._document = document
+        self._document = document.model_copy(deep=True)
         self._revision_counter = 1
         self._revision = "rev-1"
 
     def load(self) -> RepositorySnapshot:
         with self._lock:
-            return RepositorySnapshot(document=self._document, revision=self._revision)
+            return RepositorySnapshot(
+                document=self._document.model_copy(deep=True),
+                revision=self._revision,
+            )
 
     def compare_and_swap(
         self,
@@ -77,5 +88,8 @@ class InMemoryPolicyRepository:
                 )
             self._revision_counter += 1
             self._revision = f"rev-{self._revision_counter}"
-            self._document = document
-            return RepositorySnapshot(document=self._document, revision=self._revision)
+            self._document = document.model_copy(deep=True)
+            return RepositorySnapshot(
+                document=self._document.model_copy(deep=True),
+                revision=self._revision,
+            )
