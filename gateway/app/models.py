@@ -7,6 +7,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.policy import GatewayRoutingPolicy
 
 class Message(BaseModel):
     """The Chat Completions message surface used by Pi and the Web client."""
@@ -162,3 +163,23 @@ class DecisionCard(BaseModel):
     retries: int = 0
     failover_from: Optional[str] = None
     request_id: str
+
+class RoutingSimulationRequest(BaseModel):
+    """Task 6: request body for the internal-only /internal/routing/simulate
+    endpoint. `request` reuses GatewayRequest so validation matches the real
+    chat_completions path exactly; `gateway_policy` is the draft policy
+    Automation wants to preview (not yet published)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request: GatewayRequest
+    gateway_policy: GatewayRoutingPolicy
+
+
+class RoutingSimulationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    reason: str
+    estimated_cost_usd: float
+    typical_latency_ms: int

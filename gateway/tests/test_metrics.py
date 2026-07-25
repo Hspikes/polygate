@@ -15,8 +15,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app.adapters import OpenedProviderStream  # noqa: E402
 from app.circuit_breaker import CircuitBreakerRegistry  # noqa: E402
-from app.main import CACHE, app  # noqa: E402
-
+from app.main import CACHE, POLICY_RUNTIME, app  # noqa: E402
 
 client = TestClient(app)
 
@@ -177,7 +176,10 @@ class GatewayMetricsTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         provider = response.json()["polygate"]["chosen_provider"]
-
+        self.assertEqual(
+            response.headers.get("X-PolyGate-Policy-Version"),
+            str(POLICY_RUNTIME.snapshot().version),
+        )
         self.assertEqual(
             metric_value("polygate_requests_total", {"outcome": "success"}),
             request_before + 1,

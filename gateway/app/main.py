@@ -46,7 +46,13 @@ from app.metrics import (
     record_usage,
     render_metrics,
 )
-from app.models import DecisionCard, GatewayRequest, Tokens
+from app.models import (
+    DecisionCard,
+    GatewayRequest,
+    RoutingSimulationRequest,
+    RoutingSimulationResponse,
+    Tokens,
+)
 from app.policy import GatewayPolicyRuntime, GatewayPolicySnapshot  # Task 5
 from app.registry import load_providers
 from app.resilience import ResilienceSettings
@@ -80,7 +86,7 @@ if CORS_ALLOW_ORIGINS:
             "Authorization",
             "X-PolyGate-Session-ID",
         ],
-        expose_headers=["X-PolyGate-Request-ID", "X-PolyGate-Provider"],
+        expose_headers=["X-PolyGate-Request-ID", "X-PolyGate-Provider", "X-PolyGate-Policy-Version"],
     )
 
 PROVIDERS = load_providers()
@@ -198,8 +204,12 @@ async def record_chat_request(request: Request, call_next):
         record_request("server_error", time.perf_counter() - started)
         raise
 
+    policy_version = getattr(request.state, "policy_version", None)  # Task 6
+
     if getattr(request.state, "defer_metrics_to_stream", False):
         response.headers.setdefault("X-PolyGate-Request-ID", request_id)
+        if policy_version is not None:  # Task 6
+            response.headers.setdefault("X-PolyGate-Policy-Version", str(policy_version))
         return response
 
     outcome = getattr(request.state, "metric_outcome", None)
@@ -212,8 +222,9 @@ async def record_chat_request(request: Request, call_next):
             outcome = "success"
     record_request(outcome, time.perf_counter() - started)
     response.headers.setdefault("X-PolyGate-Request-ID", request_id)
+    if policy_version is not None:  # Task 6
+        response.headers.setdefault("X-PolyGate-Policy-Version", str(policy_version))
     return response
-
 
 @app.get("/health")
 def health():
@@ -365,6 +376,38 @@ def _select(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@app.post("/internal/routing/simulate", include_in_schema=False)
+def simulate_routing(body: RoutingSimulationRequest) -> RoutingSimulationResponse:
+    """Task 6: preview routing decisions for a draft policy without calling
+    any provider or touching the cache. Used by Automation's Preview flow
+    (POST /v1/admin/policies/preview) to show routing impact before publish.
+    Cluster-internal only; excluded from the public OpenAPI schema."""
+    req = body.request
+    messages = req.message_dicts()
+    required_capabilities = req.required_capabilities()
+
+    try:
+        chosen, reason, candidates = select_provider(
+            PROVIDERS,
+            messages,
+            req.polygate,
+            BREAKER.health_snapshot(),
+            required_capabilities,
+            policy=body.gateway_policy,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    estimated_cost = next(
+        candidate["est_cost"] for candidate in candidates if candidate["name"] == chosen["name"]
+    )
+    return RoutingSimulationResponse(
+        provider=chosen["name"],
+        reason=reason,
+        estimated_cost_usd=estimated_cost,
+        typical_latency_ms=chosen.get("typical_latency_ms", 0),
+    )
+
 def _new_deadline(budget_seconds: float) -> float:
     return time.monotonic() + budget_seconds
 
@@ -415,6 +458,7 @@ async def chat_completions(
             constraints.quality,
             constraints.max_cost_usd,
             constraints.latency_target_ms,
+            policy_version=policy_snapshot.version,
         )
         cached = CACHE.get(key)
         if cached:

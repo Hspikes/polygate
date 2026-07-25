@@ -13,6 +13,7 @@ class CacheKeyConstraintTests(unittest.TestCase):
             "quality": "balanced",
             "max_cost_usd": 0.01,
             "latency_target_ms": 3000,
+            "policy_version": 1,
         }
 
     def key(self, **overrides):
@@ -29,8 +30,15 @@ class CacheKeyConstraintTests(unittest.TestCase):
             self.key(quality="cheap"),
             self.key(max_cost_usd=0.02),
             self.key(latency_target_ms=500),
+            self.key(policy_version=2),
         ]
         self.assertEqual(len(set([self.key(), *variants])), len(variants) + 1)
+
+    def test_same_policy_version_and_request_stays_stable(self):
+        self.assertEqual(
+            self.key(policy_version=1),
+            self.key(policy_version=1),
+        )
 
 
 if __name__ == "__main__":

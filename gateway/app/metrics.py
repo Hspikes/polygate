@@ -70,6 +70,16 @@ REQUEST_BUDGET_EXHAUSTED = Counter(
     "Gateway request budgets exhausted before a provider result.",
     ["phase"],
 )
+POLICY_LOADED_VERSION = Gauge(
+    "polygate_policy_loaded_version",
+    "Policy version loaded by this component.",
+    ["component"],
+)
+POLICY_RELOAD_FAILURES = Counter(
+    "polygate_policy_reload_failures_total",
+    "Policy reload failures.",
+    ["component", "reason"],
+)
 
 
 def record_request(outcome: str, duration_seconds: float) -> None:
@@ -107,6 +117,13 @@ def record_stream(outcome: str) -> None:
 
 def record_budget_exhausted(phase: str) -> None:
     REQUEST_BUDGET_EXHAUSTED.labels(phase=phase).inc()
+
+def record_policy_loaded_version(component: str, version: int) -> None:
+    POLICY_LOADED_VERSION.labels(component=component).set(version)
+
+
+def record_policy_reload_failure(component: str, reason: str) -> None:
+    POLICY_RELOAD_FAILURES.labels(component=component, reason=reason).inc()
 
 
 def record_usage(
