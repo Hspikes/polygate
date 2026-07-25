@@ -195,7 +195,12 @@ POLICY_ADMIN_KEY_FILE=/var/run/secrets/polygate-policy/admin-key
     "balanced_price_tolerance": 0.2,
     "budget_mode": "soft",
     "latency_mode": "soft",
-    "high_quality_strategy": "prefer_real"
+    "high_quality_strategy": "prefer_provider",
+    "high_quality_provider": "deepseek-pro",
+    "high_quality_fallback": "prefer_real",
+    "low_quality_strategy": "prefer_provider",
+    "low_quality_provider": "deepseek-flash",
+    "low_quality_fallback": "lowest_cost"
   },
   "automation": {
     "urgency_scores": {
@@ -261,7 +266,65 @@ POLICY_ADMIN_KEY_FILE=/var/run/secrets/polygate-policy/admin-key
 | `balanced_price_tolerance` | balanced 模式允许真实 Provider 高出的价格比例 | 0–2 |
 | `budget_mode` | 无 Provider 满足预算时放宽或拒绝 | `soft` / `hard` |
 | `latency_mode` | 无 Provider 满足延迟时放宽或拒绝 | `soft` / `hard` |
-| `high_quality_strategy` | high 模式优先真实模型或最低成本 | `prefer_real` / `lowest_cost` |
+| `high_quality_strategy` | high 模式的 Provider 选择方式 | `prefer_real` / `lowest_cost` / `prefer_provider` |
+| `high_quality_provider` | high 模式的首选 Provider ID | `prefer_provider` 时必填 |
+| `high_quality_fallback` | high 首选不可用时的回退方式 | `prefer_real` / `lowest_cost` |
+| `low_quality_strategy` | cheap 模式的 Provider 选择方式 | `lowest_cost` / `prefer_provider` |
+| `low_quality_provider` | cheap 模式的首选 Provider ID | `prefer_provider` 时必填 |
+| `low_quality_fallback` | cheap 首选不可用时的回退方式 | `prefer_real` / `lowest_cost` |
+
+`quality=balanced` 不读取 high/low Provider 绑定，继续使用
+`balanced_price_tolerance`、预算和延迟规则。现有 Policy 使用
+`high_quality_strategy=prefer_real` 或 `lowest_cost` 时保持原有行为。
+
+#### 7.1.1 Policy 与 Provider Registry 边界
+
+Policy 只引用 Provider Registry 中稳定的 Provider ID，不保存 endpoint、下游
+model、API Key、价格、延迟或能力。Provider Registry 继续作为这些运行时属性的
+唯一来源。
+
+默认真实 Provider 注册为两个独立条目：
+
+```yaml
+- name: deepseek-pro
+  kind: real
+  endpoint: https://api.deepseek.com/v1/chat/completions
+  api_key_env: REAL_A_API_KEY
+  model: deepseek-v4-pro
+
+- name: deepseek-flash
+  kind: real
+  endpoint: https://api.deepseek.com/v1/chat/completions
+  api_key_env: REAL_A_API_KEY
+  model: deepseek-v4-flash
+```
+
+两者可以共享 endpoint 和凭证，但必须拥有独立 Provider ID、价格、典型延迟、
+健康状态、熔断状态和指标标签。管理员不能在 Policy Editor 中编辑 endpoint、
+model 或密钥。
+
+发布引用新 Provider 的 Policy 前，必须先部署包含该 Provider 的 Registry。
+Validate、Preview 和 Publish 均检查被引用 Provider 存在且 `kind=real`。Gateway
+若收到引用不存在 Provider 的新策略，拒绝切换并继续使用 Last Known Good。
+
+#### 7.1.2 运行时决策顺序
+
+Gateway 使用以下固定顺序：
+
+```text
+privacy / capability / health 硬过滤
+→ budget / latency 约束
+→ quality 策略
+→ 首选 Provider
+→ fallback
+```
+
+- `quality=high` 且 `privacy=standard`：首选 `high_quality_provider`；
+- `quality=cheap` 且 `privacy=standard`：首选 `low_quality_provider`；
+- `quality=balanced`：保持现有成本、延迟和真实 Provider 权衡逻辑；
+- `privacy=high`：外部 Provider 在策略选择前即被排除，管理员策略不能覆盖；
+- 首选 Provider 因健康、能力、预算或延迟约束不可用时，执行对应 fallback；
+- fallback 和 Provider failover 都必须写入可读决策理由。
 
 ### 7.2 Automation 字段
 
@@ -358,6 +421,7 @@ Gateway 和 Worker 请求时携带 `If-None-Match`。版本未变化时返回
 ```text
 GET  /v1/admin/policies
 GET  /v1/admin/policies/{version}
+GET  /v1/admin/policies/providers
 POST /v1/admin/policies/validate
 POST /v1/admin/policies/preview
 POST /v1/admin/policies/publish
@@ -370,6 +434,22 @@ POST /v1/admin/policies/{version}/rollback
 Authorization: Bearer <POLICY_ADMIN_KEY>
 ```
 
+#### Provider Catalog
+
+`GET /v1/admin/policies/providers` 返回 Policy Editor 可选择的 Provider ID、kind、
+model、价格、典型延迟、能力和当前健康状态，不返回 endpoint、API Key 环境变量或
+任何秘密。Automation 从 Gateway 的只读内部 Provider Catalog 获取这些数据，
+Browser 不直接访问 Gateway。
+
+Gateway 提供：
+
+```http
+GET /internal/routing/providers
+```
+
+该接口只允许集群内部 Automation 调用，并与 `/internal/routing/simulate` 使用同一
+Provider Registry 快照。Provider Catalog 不写缓存、业务指标或策略状态。
+
 #### Validate
 
 验证：
@@ -381,9 +461,13 @@ Authorization: Bearer <POLICY_ADMIN_KEY>
 - Finance 隐私锁；
 - Guardrails；
 - queue 参数；
+- high/low strategy 与条件必填字段；
+- 被引用 Provider 是否存在且为真实 Provider；
 - schema version。
 
-Validate 不写入 ConfigMap、Redis 或内存。
+Validate 使用 Gateway 当前 Provider Catalog 完成引用检查，但不写入 ConfigMap、
+Redis 或内存。Provider Catalog 不可用时返回 503，不能在缺少引用校验的情况下
+继续 Preview 或 Publish。
 
 #### Preview
 
@@ -392,7 +476,8 @@ Preview 返回：
 - 当前 base version；
 - 字段级 before/after diff；
 - 校验 warning；
-- 路由模拟；
+- 路由模拟，包括策略模式、首选 Provider、最终 Provider、模型、成本、延迟与
+  fallback 原因；
 - 优先级模拟；
 - 队列顺序模拟。
 
@@ -429,6 +514,7 @@ Automation 自己模拟 urgency、scenario 和 queue 参数。
 ```text
 Bearer 认证
 → Schema 与 Guardrail 校验
+→ Provider Registry 引用校验
 → base_version 并发检查
 → 最终影响预览
 → 使用 Kubernetes resourceVersion 更新 ConfigMap
@@ -504,6 +590,8 @@ kubectl port-forward service/automation 8020:8020
 - 管理员密钥输入；
 - active version 和系统状态；
 - Gateway Routing 参数；
+- high/low strategy 与首选 Provider 下拉框；
+- balanced 策略参数；
 - urgency scores；
 - scenario weights 和 defaults；
 - queue 参数；
@@ -531,6 +619,9 @@ kubectl port-forward service/automation 8020:8020
 - 发布前显示最终 diff；
 - 409 时要求重新加载；
 - Guardrails 使用锁定控件；
+- Provider 下拉框只展示当前 Registry 中 `kind=real` 的条目；
+- 选择 `prefer_provider` 时显示并要求对应 Provider 字段；
+- Preview 显示首选 Provider、实际模型、最终 Provider 和 fallback；
 - API 错误必须映射到具体字段。
 
 ## 13. 决策卡片兼容
@@ -539,7 +630,9 @@ kubectl port-forward service/automation 8020:8020
 
 ```json
 {
-  "policy_version": 5
+  "policy_version": 5,
+  "routing_strategy": "prefer_provider",
+  "preferred_provider": "deepseek-pro"
 }
 ```
 
@@ -553,6 +646,8 @@ X-PolyGate-Policy-Version: 5
 ```
 
 现有决策卡片结构保持不变，Grafana 仍显示策略版本。
+在可选字段尚未完成契约对齐时，现有 `chosen_provider` 表示最终 Provider，
+`reason` 必须包含策略模式、首选 Provider 和 fallback 原因。
 
 ## 14. 可观测性
 
@@ -597,7 +692,11 @@ Grafana继续使用默认 HTML sanitization。Editor 不使用 iframe，Text Pan
 | ConfigMap 写失败 | 发布失败，旧策略继续生效 |
 | Redis 刷新失败 | 新策略生效，标记 cache degraded 并重试 |
 | Policy API 不可用 | Gateway/Worker 使用 Last Known Good |
+| Gateway Provider Catalog 不可用 | Validate/Preview/Publish 返回 503，旧策略继续生效 |
 | 客户端收到非法策略 | 拒绝切换，增加 reload failure |
+| Policy 引用未知或非真实 Provider | Validate/Publish 返回 422，不激活 |
+| 首选 Provider 被隐私规则排除 | 执行 fallback，隐私 Guardrail 不可覆盖 |
+| 首选 Provider 不健康或不满足能力 | 执行 fallback，并记录原因 |
 | Automation 重启 | 从 ConfigMap 恢复 active version 与历史 |
 | Redis Pod 重建 | 从 ConfigMap 重建策略缓存 |
 | Gateway/Worker 重启 | 从挂载 ConfigMap 建立初始策略 |
@@ -615,6 +714,8 @@ ConfigMap 能抵抗 Pod 和 Redis 重启，但删除整个 EKS 集群会删除 C
 - 未知字段和越界值被拒绝；
 - urgency 顺序错误被拒绝；
 - Finance 隐私修改被拒绝；
+- `prefer_provider` 缺少 Provider ID 时被拒绝；
+- 未知或非真实 Provider 引用被拒绝；
 - Guardrails 不能关闭。
 
 ### 16.2 Policy API 测试
@@ -628,7 +729,8 @@ ConfigMap 能抵抗 Pod 和 Redis 重启，但删除整个 EKS 集群会删除 C
 - Redis 失败进入 degraded；
 - 历史最多 20 个版本；
 - rollback 创建新版本；
-- ConfigMap 重启恢复。
+- ConfigMap 重启恢复；
+- Provider Catalog 不可用时禁止发布；
 
 ### 16.3 Gateway 测试
 
@@ -636,7 +738,12 @@ ConfigMap 能抵抗 Pod 和 Redis 重启，但删除整个 EKS 集群会删除 C
 - soft/hard budget；
 - soft/hard latency；
 - balanced tolerance；
-- high quality strategy；
+- high quality strategy：standard privacy 首选 `deepseek-pro`；
+- low quality strategy：standard privacy 首选 `deepseek-flash`；
+- balanced 策略行为保持不变；
+- high privacy 不选择任何外部 DeepSeek Provider；
+- 首选 Provider 不健康、能力不符或被约束排除时执行 fallback；
+- Adapter 向下游发送 Registry 中准确的 model；
 - dry-run 不调用 Provider；
 - 缓存按 policy version 隔离；
 - Policy API 故障时 Last Known Good；
@@ -671,25 +778,29 @@ ConfigMap 能抵抗 Pod 和 Redis 重启，但删除整个 EKS 集群会删除 C
 
 1. Grafana 显示 active v1，两个 Gateway Pod 与 Worker 均为 v1。
 2. 使用 `quality=high`、`privacy=standard` 发送请求。
-3. 默认 `high_quality_strategy=prefer_real`，选择 real-a。
+3. 默认 high 策略选择 `deepseek-pro`，再以 `quality=cheap` 验证
+   `deepseek-flash`。
 4. 从 Grafana 打开 Policy Editor。
-5. 修改为 `high_quality_strategy=lowest_cost`。
-6. Preview 显示 real-a → mock-b、成本和延迟变化。
+5. 将 `high_quality_strategy` 修改为 `lowest_cost`。
+6. Preview 显示 `deepseek-pro` → 最低成本候选，以及成本和延迟变化。
 7. 输入 change note，发布 v2。
 8. 5 秒内 Grafana 显示所有组件加载 v2。
-9. 使用不同 nonce 发送相同约束请求，选择变为 mock-b。
-10. 展示决策理由、成本、延迟和策略版本。
+9. 使用不同 nonce 发送相同约束请求，验证选择变更。
+10. 展示策略模式、首选 Provider、最终 Provider、成本、延迟和策略版本。
 11. 回滚 v1，系统创建 v3。
-12. 再次请求，路由恢复为 real-a。
+12. 再次请求，high 路由恢复为 `deepseek-pro`。
 
 ## 18. 四人分工
 
 ### A：Gateway Policy Runtime
 
 - 参数化 `router.py`；
+- 为 `deepseek-pro` 与 `deepseek-flash` 建立独立 Provider；
+- 实现 high/low preferred Provider 与 fallback；
 - Gateway Policy Client；
 - Last Known Good；
 - `/internal/routing/simulate`；
+- `/internal/routing/providers`；
 - cache key 加入 policy version；
 - policy version 响应头；
 - 与 D 对齐决策卡片可选字段；
@@ -700,6 +811,7 @@ ConfigMap 能抵抗 Pod 和 Redis 重启，但删除整个 EKS 集群会删除 C
 - Policy Pydantic models；
 - ConfigMap Policy Repository；
 - Redis 缓存；
+- Gateway Provider Catalog 代理与引用校验；
 - validate、preview、publish、history、rollback；
 - 管理员 Bearer 认证；
 - Worker 动态 queue policy；
@@ -709,6 +821,7 @@ ConfigMap 能抵抗 Pod 和 Redis 重启，但删除整个 EKS 集群会删除 C
 ### C：Kubernetes 与可观测性
 
 - 默认 Policy ConfigMap；
+- Provider ConfigMap 注册 Pro 与 Flash，并保证先于引用它们的 Policy 发布；
 - Policy Admin Secret；
 - ServiceAccount、Role、RoleBinding；
 - ConfigMap/Secret volume；
@@ -724,6 +837,7 @@ ConfigMap 能抵抗 Pod 和 Redis 重启，但删除整个 EKS 集群会删除 C
 - `/admin/policies` 页面；
 - 管理员密钥输入；
 - 分组表单；
+- high/low strategy、Provider 与 fallback 控件；
 - 锁定 Guardrails；
 - Validate、Preview、Publish；
 - diff、history、compare、rollback；
@@ -761,6 +875,9 @@ D：基于 examples 开发 Policy Editor
 - 两个 Gateway Pod 与 Worker 收敛到同一版本；
 - Redis/Pod 重启不丢策略和历史；
 - Guardrails 无法关闭；
+- high/cheap 分别首选 Pro/Flash，balanced 行为保持不变；
+- `privacy=high` 无法被 Provider 偏好覆盖；
+- 未知 Provider 引用不能发布或热加载；
 - cache key 按策略版本隔离；
 - rollback 可审计；
 - Grafana 展示版本、漂移和发布影响；
