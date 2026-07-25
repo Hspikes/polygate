@@ -138,6 +138,59 @@ kube_deployment_status_replicas_available{namespace="default",deployment="gatewa
 kube_horizontalpodautoscaler_status_desired_replicas{namespace="default",horizontalpodautoscaler="gateway-hpa"}
 ```
 
+## Policy observability
+
+Two scrape jobs cover the policy control plane. `polygate-automation-api`
+(Pod port 8020) exports the control-plane side — active version, publication
+outcomes, last publish time. `polygate-automation-worker` (Pod port 9000)
+exports the Worker's loaded version and reload failures. Gateway Pods export
+their own loaded version on the existing `polygate-gateway` job. The job names
+are identical in `prometheus.yml` (Compose) and `prometheus-kubernetes.yml`, so
+the same dashboard queries and smoke assertions work in both environments.
+
+Metric names and label values are frozen in `contracts/README.md` — Grafana and
+the alert criterion depend on the literal strings `component="gateway"` and
+`component="automation-worker"`, and on `reason=network|http|validation|file`.
+
+The dashboard's Policy Management panels are keyed by title (the demo script
+and screenshots locate them that way), so `kubernetes-monitoring-preflight.sh`
+asserts the seven titles exist and are unique. `Policy Version Drift` shows
+`max(active) - min(loaded)`: 0 means every component converged; a non-zero
+value persisting beyond 30 seconds means a component is stuck on an old policy.
+
+Verify the full lifecycle against a deployed cluster:
+
+```bash
+kubectl port-forward deployment/automation 8020:8020 &
+kubectl port-forward deployment/prometheus 9090:9090 &
+POLICY_ADMIN_KEY=<key> ./scripts/kubernetes-policy-smoke-test.sh
+```
+
+It reads the active version, checks that a wrong key gets 401, validates and
+previews a changed `high_quality_strategy`, publishes, waits for every Gateway
+Pod and the Worker to load the new version, rolls back to the original content,
+and waits for convergence again. The admin key is never printed, and an EXIT /
+INT / TERM trap rolls back if the run is aborted after publishing — so an
+interrupted run does not leave the cluster on a throwaway version.
+
+Policy-aware assertions are also available in the monitoring smoke test:
+
+```bash
+INCLUDE_AUTOMATION=1 INCLUDE_POLICY=1 GRAFANA_PASSWORD=<password> \
+  ./scripts/kubernetes-monitoring-smoke-test.sh
+```
+
+Useful policy PromQL:
+
+```promql
+max(polygate_policy_active_version)
+min(polygate_policy_loaded_version{component="gateway"})
+max(polygate_policy_loaded_version{component="automation-worker"})
+max(polygate_policy_active_version) - min(polygate_policy_loaded_version)
+sum by (action, result) (polygate_policy_publications_total)
+sum by (component, reason) (rate(polygate_policy_reload_failures_total[5m]))
+```
+
 ## Scope and limitations
 
 - All application resources currently live in `default`; discovery and
