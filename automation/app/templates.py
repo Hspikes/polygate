@@ -33,7 +33,3 @@ TEMPLATES: tuple[TemplateDefinition, ...] = (
         scenario_weight=0,
     ),
 )
-
-TEMPLATE_BY_SCENARIO = {template.id: template for template in TEMPLATES}
-
-URGENCY_SCORE = {"critical": 100, "high": 60, "normal": 30, "low": 10}

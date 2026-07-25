@@ -85,6 +85,7 @@ class RedisAutomationStore:
             priority=preview.priority,
             queue_position=queue_position,
             created_at=datetime.now(UTC),
+            policy_version=preview.policy_version,
         )
 
         # 用 pipeline 把"写 job、写内部快照、入队、写索引"这几步打包成一次

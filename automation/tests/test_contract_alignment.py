@@ -12,12 +12,14 @@ from automation.app.models import (
     JobRecord,
     PreviewResponse,
 )
+from automation.app.policy_models import PolicyStoreDocument, PolicyVersion
 from automation.app.store import InMemoryAutomationStore
 
 
 # 仓库根目录：automation/tests/test_contract_alignment.py -> parents[2] == repo root
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES_FILE = REPO_ROOT / "contracts" / "automation-examples.json"
+POLICY_EXAMPLES_FILE = REPO_ROOT / "contracts" / "policy-examples.json"
 
 
 def load_examples() -> dict:
@@ -26,6 +28,8 @@ def load_examples() -> dict:
 
 
 EXAMPLES = load_examples()
+POLICY_EXAMPLES = json.loads(POLICY_EXAMPLES_FILE.read_text(encoding="utf-8"))
+ACTIVE_POLICY = PolicyStoreDocument.model_validate(POLICY_EXAMPLES["store"]).active
 
 
 class ExampleParsesIntoModelTests(unittest.TestCase):
@@ -61,7 +65,7 @@ class SerializationAliasTests(unittest.TestCase):
 
     def test_compiled_preview_emits_class_not_class_underscore(self):
         intent = AutomationIntent.model_validate(self._intent_payload())
-        preview = _compile_preview(intent)
+        preview = _compile_preview(intent, ACTIVE_POLICY)
         payload = preview.model_dump(mode="json", by_alias=True)
 
         # priority 用契约字段名 class，不能是内部 class_
@@ -76,7 +80,7 @@ class SerializationAliasTests(unittest.TestCase):
 
     def test_compiled_preview_top_level_shape_matches_contract(self):
         intent = AutomationIntent.model_validate(self._intent_payload())
-        preview = _compile_preview(intent)
+        preview = _compile_preview(intent, ACTIVE_POLICY)
         payload = preview.model_dump(mode="json", by_alias=True)
 
         # 顶层字段集合与冻结契约 required 一致
@@ -103,7 +107,7 @@ class SerializationAliasTests(unittest.TestCase):
     def test_serialization_round_trips_back_into_model(self):
         # 序列化往返：dump(by_alias) 出来的 JSON 必须能重新被 model 解析回去
         intent = AutomationIntent.model_validate(self._intent_payload())
-        preview = _compile_preview(intent)
+        preview = _compile_preview(intent, ACTIVE_POLICY)
         payload = preview.model_dump(mode="json", by_alias=True)
 
         reparsed = PreviewResponse.model_validate(payload)
@@ -121,8 +125,27 @@ class CompilePreviewBehaviorTests(unittest.TestCase):
 
     def test_initial_score_is_140_for_critical_production_incident(self):
         # critical(100) + production_incident(40) = 140，与 example 对齐
-        preview = _compile_preview(self._intent())
+        preview = _compile_preview(self._intent(), ACTIVE_POLICY)
         self.assertEqual(preview.priority.initial_score, 140)
+        self.assertEqual(preview.policy_version, 4)
+
+    def test_score_and_version_come_from_the_injected_policy(self):
+        record = copy.deepcopy(POLICY_EXAMPLES["store"]["versions"][0])
+        record["version"] = 9
+        record["policy"]["automation"]["urgency_scores"]["critical"] = 200
+        record["policy"]["automation"]["scenarios"]["production_incident"][
+            "weight"
+        ] = 50
+        policy = PolicyVersion.model_validate(record)
+
+        preview = _compile_preview(self._intent(), policy)
+
+        self.assertEqual(preview.priority.initial_score, 250)
+        self.assertEqual(preview.policy_version, 9)
+        self.assertEqual(
+            preview.priority.reason,
+            "critical urgency (200) + production_incident scenario (50)",
+        )
 
     def test_finance_summary_locks_privacy_to_high(self):
         # 用户传 standard，finance_summary 场景应被强制拉回 high 并记 adjustment
@@ -137,7 +160,7 @@ class CompilePreviewBehaviorTests(unittest.TestCase):
                 "latency_target_ms": 3000,
             },
         )
-        preview = _compile_preview(finance_intent)
+        preview = _compile_preview(finance_intent, ACTIVE_POLICY)
         self.assertEqual(preview.normalized_intent.preferences.privacy, "high")
         self.assertEqual(preview.gateway_request.polygate.privacy, "high")
         self.assertEqual(
@@ -151,7 +174,7 @@ class EnqueuedJobSerializationTests(unittest.TestCase):
 
     def test_enqueued_job_serializes_with_contract_field_names(self):
         intent = AutomationIntent.model_validate(copy.deepcopy(EXAMPLES["intent"]))
-        preview = _compile_preview(intent)
+        preview = _compile_preview(intent, ACTIVE_POLICY)
 
         store = InMemoryAutomationStore()
         store.save_preview(preview)
@@ -177,13 +200,24 @@ class EnqueuedJobSerializationTests(unittest.TestCase):
 
     def test_enqueue_is_idempotent_for_same_key(self):
         intent = AutomationIntent.model_validate(copy.deepcopy(EXAMPLES["intent"]))
-        preview = _compile_preview(intent)
+        preview = _compile_preview(intent, ACTIVE_POLICY)
 
         store = InMemoryAutomationStore()
         store.save_preview(preview)
         first = store.enqueue(preview, idempotency_key="same-key")
         second = store.enqueue(preview, idempotency_key="same-key")
         self.assertEqual(first.job_id, second.job_id)
+
+    def test_idempotent_enqueue_preserves_submission_policy_version(self):
+        intent = AutomationIntent.model_validate(copy.deepcopy(EXAMPLES["intent"]))
+        preview = _compile_preview(intent, ACTIVE_POLICY)
+
+        store = InMemoryAutomationStore()
+        first = store.enqueue(preview, idempotency_key="policy-version-key")
+        second = store.enqueue(preview, idempotency_key="policy-version-key")
+
+        self.assertEqual(first.policy_version, ACTIVE_POLICY.version)
+        self.assertEqual(second.policy_version, ACTIVE_POLICY.version)
 
 class PolicyVersionFieldTests(unittest.TestCase):
     """policy_version 是新增的可选字段（Policy v1 契约），验证其可选行为。"""

@@ -5,12 +5,19 @@ import os
 import shlex
 import uuid
 import redis
-from fastapi import FastAPI, Header, HTTPException, Query, status
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from pydantic import BaseModel, ConfigDict, Field
 
 from automation.app.models import (
     AutomationIntent,
     GatewayMessage,
     GatewayRequest,
+    GatewaySimulationRequest,
     JobRecord,
     JobSubmission,
     JobState,
@@ -19,8 +26,26 @@ from automation.app.models import (
     Snippets,
     TemplateDefinition,
 )
+from automation.app.kubernetes_policy_repository import KubernetesConfigMapPolicyRepository
+from automation.app.policy_auth import PolicyAdminAuthenticator
+from automation.app.policy_manager import (
+    disambiguate_case_id,
+    GatewaySimulationUnavailable,
+    GatewaySimulator,
+    HttpGatewaySimulator,
+    PolicyManager,
+    RedisPolicyCache,
+)
+from automation.app.policy_metrics import ACTIVE_VERSION, LAST_PUBLISH, PUBLICATIONS
+from automation.app.policy_models import ActivePolicyResponse, PolicyDraft, PolicyStoreDocument, PolicyVersion
+from automation.app.policy_repository import (
+    InMemoryPolicyRepository,
+    PolicyConflict,
+    PolicyVersionNotFound,
+    RepositoryUnavailable,
+)
 from automation.app.store import AutomationStore, InMemoryAutomationStore
-from automation.app.templates import TEMPLATE_BY_SCENARIO, TEMPLATES, URGENCY_SCORE
+from automation.app.templates import TEMPLATES
 from automation.app.redis_store import RedisAutomationStore
 
 PREVIEW_TTL_SECONDS = 600
@@ -28,24 +53,216 @@ POLYGATE_URL_DEFAULT = "http://localhost:8000"
 POLYGATE_URL_PLACEHOLDER = "${POLYGATE_URL:-" + POLYGATE_URL_DEFAULT + "}"
 
 
-def _compile_preview(intent: AutomationIntent) -> PreviewResponse:
+class PolicyPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    policy: PolicyDraft
+    gateway_cases: list[GatewaySimulationRequest] = Field(default_factory=list)
+    priority_cases: list[AutomationIntent] = Field(default_factory=list)
+
+
+class PolicyPublishRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_version: int = Field(ge=1)
+    change_note: str = Field(min_length=1, max_length=500)
+    policy: PolicyDraft
+
+
+class PolicyRollbackRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_version: int = Field(ge=1)
+    change_note: str = Field(min_length=1, max_length=500)
+
+
+def _policy_diff(before: object, after: object, path: str = "") -> list[dict[str, object]]:
+    if isinstance(before, dict) and isinstance(after, dict):
+        changes: list[dict[str, object]] = []
+        for key in sorted(set(before) | set(after)):
+            child_path = f"{path}.{key}" if path else key
+            changes.extend(_policy_diff(before.get(key), after.get(key), child_path))
+        return changes
+    if before != after:
+        return [{"path": path, "before": before, "after": after}]
+    return []
+
+
+def _publish_response(result) -> dict[str, object]:
+    return {
+        "version": result.version,
+        "previous_version": result.previous_version,
+        "rollback_from": result.rollback_from,
+        "published_at": result.published_at,
+        "warnings": result.warnings,
+    }
+
+
+def _policy_router(
+    manager: PolicyManager,
+    authenticator: PolicyAdminAuthenticator,
+    gateway_simulator: GatewaySimulator,
+) -> APIRouter:
+    router = APIRouter()
+    startup_active = manager.active
+    ACTIVE_VERSION.set(startup_active.version)
+    LAST_PUBLISH.set(startup_active.created_at.timestamp())
+
+    def require_admin(authorization: str | None = Header(default=None)) -> None:
+        authenticator.require(authorization)
+
+    @router.get("/v1/policies/active", response_model=ActivePolicyResponse)
+    def active_policy(if_none_match: str | None = Header(default=None, alias="If-None-Match")):
+        active = manager.active
+        etag = f'"policy-v{active.version}"'
+        if if_none_match == etag:
+            return Response(status_code=304, headers={"ETag": etag})
+        return Response(
+            content=ActivePolicyResponse(
+                version=active.version,
+                schema_version=active.policy.schema_version,
+                published_at=active.created_at,
+                policy=active.policy,
+            ).model_dump_json(),
+            media_type="application/json",
+            headers={"ETag": etag},
+        )
+
+    @router.get("/v1/admin/policies", response_model=list[PolicyVersion])
+    def list_policies(_: None = Depends(require_admin)) -> list[PolicyVersion]:
+        return manager.history
+
+    @router.get("/v1/admin/policies/{version}", response_model=PolicyVersion)
+    def get_policy(version: int, _: None = Depends(require_admin)) -> PolicyVersion:
+        record = manager.get_version(version)
+        if record is None:
+            raise HTTPException(status_code=404, detail="policy version not found")
+        return record
+
+    @router.post("/v1/admin/policies/validate")
+    def validate_policy(draft: PolicyDraft, _: None = Depends(require_admin)) -> dict[str, object]:
+        return {"valid": True, "warnings": manager.validate(draft)}
+
+    @router.post("/v1/admin/policies/preview")
+    def preview_policy(request: PolicyPreviewRequest, _: None = Depends(require_admin)) -> dict[str, object]:
+        active = manager.active
+        priority = manager.preview_priority(
+            request.policy,
+            request.priority_cases,
+            active_policy=active.policy,
+        )
+        before_routing = gateway_simulator.simulate(active.policy, request.gateway_cases)
+        after_routing = gateway_simulator.simulate(request.policy, request.gateway_cases)
+        routing_slug_counts: dict[str, int] = {}
+        return {
+            "base_version": active.version,
+            "diff": _policy_diff(
+                active.policy.model_dump(mode="json"), request.policy.model_dump(mode="json")
+            ),
+            "warnings": manager.validate(request.policy),
+            "simulations": {
+                "routing": [
+                    {
+                        "case_id": disambiguate_case_id(
+                            f"{case.polygate.quality}-{case.polygate.privacy}",
+                            routing_slug_counts,
+                        ),
+                        "before": before,
+                        "after": after,
+                    }
+                    for case, before, after in zip(request.gateway_cases, before_routing, after_routing)
+                ],
+                "priority": [simulation.__dict__ for simulation in priority],
+                "queue": {
+                    "before_order": [
+                        simulation.case_id
+                        for simulation in sorted(priority, key=lambda item: item.before_score, reverse=True)
+                    ],
+                    "after_order": [
+                        simulation.case_id
+                        for simulation in sorted(priority, key=lambda item: item.after_score, reverse=True)
+                    ],
+                },
+            },
+        }
+
+    def record_publication(action: str, result) -> dict[str, object]:
+        ACTIVE_VERSION.set(result.version)
+        LAST_PUBLISH.set(result.published_at.timestamp())
+        PUBLICATIONS.labels(action=action, result="degraded" if result.warnings else "success").inc()
+        return _publish_response(result)
+
+    @router.post("/v1/admin/policies/publish", status_code=201)
+    def publish_policy(request: PolicyPublishRequest, _: None = Depends(require_admin)) -> dict[str, object]:
+        try:
+            result = manager.publish(
+                base_version=request.base_version,
+                draft=request.policy,
+                change_note=request.change_note,
+                actor="policy-admin",
+            )
+        except PolicyConflict as exc:
+            PUBLICATIONS.labels(action="publish", result="rejected").inc()
+            raise HTTPException(status_code=409, detail="policy version conflict") from exc
+        except RepositoryUnavailable as exc:
+            PUBLICATIONS.labels(action="publish", result="degraded").inc()
+            raise HTTPException(status_code=503, detail="policy repository unavailable") from exc
+        return record_publication("publish", result)
+
+    @router.post("/v1/admin/policies/{version}/rollback", status_code=201)
+    def rollback_policy(
+        version: int,
+        request: PolicyRollbackRequest,
+        _: None = Depends(require_admin),
+    ) -> dict[str, object]:
+        try:
+            result = manager.rollback(
+                target_version=version,
+                base_version=request.base_version,
+                change_note=request.change_note,
+                actor="policy-admin",
+            )
+        except PolicyVersionNotFound as exc:
+            PUBLICATIONS.labels(action="rollback", result="rejected").inc()
+            raise HTTPException(status_code=404, detail="policy version not found") from exc
+        except PolicyConflict as exc:
+            PUBLICATIONS.labels(action="rollback", result="rejected").inc()
+            raise HTTPException(status_code=409, detail="policy version conflict") from exc
+        except RepositoryUnavailable as exc:
+            PUBLICATIONS.labels(action="rollback", result="degraded").inc()
+            raise HTTPException(status_code=503, detail="policy repository unavailable") from exc
+        return record_publication("rollback", result)
+
+    return router
+
+
+def _compile_preview(
+    intent: AutomationIntent,
+    policy_version: PolicyVersion,
+) -> PreviewResponse:
     normalized = intent.model_copy(deep=True)
     adjustments: list[str] = []
-    template = TEMPLATE_BY_SCENARIO[normalized.scenario]
 
     if normalized.scenario.value == "finance_summary" and normalized.preferences.privacy != "high":
         normalized.preferences.privacy = "high"
         adjustments.append("finance_summary requires privacy=high")
 
-    urgency_score = URGENCY_SCORE[normalized.urgency.value]
-    score = urgency_score + template.scenario_weight
+    automation_policy = policy_version.policy.automation
+    urgency_score = automation_policy.urgency_scores.model_dump()[
+        normalized.urgency.value
+    ]
+    scenario_policy = automation_policy.scenarios.model_dump()[
+        normalized.scenario.value
+    ]
+    scenario_weight = scenario_policy["weight"]
+    score = urgency_score + scenario_weight
     priority = PriorityDecision(
         **{
             "class": normalized.urgency,
             "initial_score": score,
             "reason": (
                 f"{normalized.urgency.value} urgency ({urgency_score}) + "
-                f"{normalized.scenario.value} scenario ({template.scenario_weight})"
+                f"{normalized.scenario.value} scenario ({scenario_weight})"
             ),
         }
     )
@@ -83,12 +300,45 @@ def _compile_preview(intent: AutomationIntent) -> PreviewResponse:
         gateway_request=gateway_request,
         snippets=snippets,
         policy_adjustments=adjustments,
+        policy_version=policy_version.version,
     )
 
 
-def create_app(store: AutomationStore | None = None) -> FastAPI:
+def create_app(
+    store: AutomationStore | None = None,
+    policy_manager: PolicyManager | None = None,
+    gateway_simulator: GatewaySimulator | None = None,
+    policy_authenticator: PolicyAdminAuthenticator | None = None,
+) -> FastAPI:
     app = FastAPI(title="PolyGate Automation API", version="0.1.0-skeleton")
     persistence = store or InMemoryAutomationStore()
+
+    @app.exception_handler(RepositoryUnavailable)
+    def repository_unavailable(_, __):
+        return JSONResponse(status_code=503, content={"detail": "policy repository unavailable"})
+
+    @app.exception_handler(PolicyConflict)
+    def policy_conflict(_, __):
+        return JSONResponse(status_code=409, content={"detail": "policy version conflict"})
+
+    @app.exception_handler(GatewaySimulationUnavailable)
+    def gateway_simulation_unavailable(_, __):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "gateway simulation unavailable"},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    def request_validation_error(request: Request, exc: RequestValidationError):
+        if request.url.path == "/v1/admin/policies/publish":
+            PUBLICATIONS.labels(action="publish", result="rejected").inc()
+        elif request.url.path.startswith("/v1/admin/policies/") and request.url.path.endswith("/rollback"):
+            PUBLICATIONS.labels(action="rollback", result="rejected").inc()
+        details = [
+            {key: error[key] for key in ("loc", "msg", "type") if key in error}
+            for error in exc.errors()
+        ]
+        return JSONResponse(status_code=422, content={"detail": details})
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -96,6 +346,11 @@ def create_app(store: AutomationStore | None = None) -> FastAPI:
 
     @app.get("/ready")
     def ready() -> dict[str, str]:
+        if policy_manager is not None and not policy_manager.ready:
+            raise HTTPException(
+                status_code=503,
+                detail="policy manager unavailable",
+            )
         redis_client = getattr(persistence, "r", None)
         if redis_client is not None:
             try:
@@ -104,13 +359,22 @@ def create_app(store: AutomationStore | None = None) -> FastAPI:
                 raise HTTPException(status_code=503, detail=f"redis unavailable: {exc}")
         return {"status": "ready", "service": "automation"}
 
+    @app.get("/metrics")
+    def metrics() -> Response:
+        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
     @app.get("/v1/templates", response_model=list[TemplateDefinition])
     def list_templates() -> list[TemplateDefinition]:
         return list(TEMPLATES)
 
     @app.post("/v1/requests/preview", response_model=PreviewResponse, response_model_exclude_none=True)
     def preview(intent: AutomationIntent) -> PreviewResponse:
-        compiled = _compile_preview(intent)
+        if policy_manager is None:
+            raise HTTPException(
+                status_code=503,
+                detail="policy manager unavailable",
+            )
+        compiled = _compile_preview(intent, policy_manager.active)
         persistence.save_preview(compiled)
         return compiled
 
@@ -145,6 +409,9 @@ def create_app(store: AutomationStore | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="job not found")
         return record
 
+    if policy_manager is not None and policy_authenticator is not None and gateway_simulator is not None:
+        app.include_router(_policy_router(policy_manager, policy_authenticator, gateway_simulator))
+
     return app
 
 
@@ -167,4 +434,20 @@ def get_app() -> FastAPI:
     import 本模块不会触发这个检查，所以 test_api.py / test_contract_alignment.py
     可以直接 import create_app / _compile_preview，不需要 Redis。
     """
-    return create_app(_build_default_store())
+    store = _build_default_store()
+    if os.getenv("POLICY_ALLOW_ENV_ADMIN_KEY") == "true":
+        policy_file = Path(os.environ["POLICY_FILE"])
+        repository = InMemoryPolicyRepository(
+            PolicyStoreDocument.model_validate_json(policy_file.read_text(encoding="utf-8"))
+        )
+        authenticator = PolicyAdminAuthenticator.from_environment_for_local_development()
+    else:
+        repository = KubernetesConfigMapPolicyRepository.from_environment()
+        authenticator = PolicyAdminAuthenticator.from_file(Path(os.environ["POLICY_ADMIN_KEY_FILE"]))
+
+    return create_app(
+        store=store,
+        policy_manager=PolicyManager(repository, RedisPolicyCache(store.r)),
+        gateway_simulator=HttpGatewaySimulator(os.environ["GATEWAY_URL"]),
+        policy_authenticator=authenticator,
+    )

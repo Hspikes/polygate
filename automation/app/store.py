@@ -47,6 +47,7 @@ class InMemoryAutomationStore:
             priority=preview.priority,
             queue_position=queued_count + 1,
             created_at=datetime.now(UTC),
+            policy_version=preview.policy_version,
         )
         self.jobs[record.job_id] = record
         self.idempotency[idempotency_key] = record.job_id
