@@ -9,7 +9,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -51,6 +52,19 @@ from automation.app.redis_store import RedisAutomationStore
 PREVIEW_TTL_SECONDS = 600
 POLYGATE_URL_DEFAULT = "http://localhost:8000"
 POLYGATE_URL_PLACEHOLDER = "${POLYGATE_URL:-" + POLYGATE_URL_DEFAULT + "}"
+ADMIN_DIR = Path(__file__).resolve().parents[1] / "admin"
+ADMIN_ASSET_DIR = ADMIN_DIR
+ADMIN_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self'; "
+    "img-src 'self' data:; "
+    "connect-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'none'; "
+    "frame-ancestors 'none'; "
+    "form-action 'none'"
+)
 
 
 class PolicyPreviewRequest(BaseModel):
@@ -312,6 +326,26 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(title="PolyGate Automation API", version="0.1.0-skeleton")
     persistence = store or InMemoryAutomationStore()
+
+    @app.middleware("http")
+    async def secure_policy_admin(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/admin/"):
+            response.headers["Content-Security-Policy"] = ADMIN_CONTENT_SECURITY_POLICY
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
+    app.mount(
+        "/admin/assets",
+        StaticFiles(directory=ADMIN_ASSET_DIR, check_dir=True),
+        name="policy-admin-assets",
+    )
+
+    @app.get("/admin/policies", include_in_schema=False)
+    def policy_admin() -> FileResponse:
+        return FileResponse(ADMIN_DIR / "index.html", media_type="text/html")
 
     @app.exception_handler(RepositoryUnavailable)
     def repository_unavailable(_, __):

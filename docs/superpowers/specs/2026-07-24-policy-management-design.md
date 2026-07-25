@@ -585,13 +585,23 @@ http://localhost:8020/admin/policies
 kubectl port-forward service/automation 8020:8020
 ```
 
+Task 7 当前交付边界以已经合并的 `contracts/policy.schema.json`、
+`contracts/policy-examples.json` 和 Automation Policy API 为准。本文其他章节描述的
+`prefer_provider`、Provider Catalog 与 high/low Provider 绑定属于后续策略演进；在
+Schema、examples、Gateway runtime 和 Automation API 全部实现并重新交接前，不进入
+本轮 Editor。前端不能调用尚不存在的 `/v1/admin/policies/providers`。
+
+当前前端实现采用自托管 Alpine CSP build 与原生 HTML/CSS/JavaScript。它作为
+Automation 镜像内静态资源交付，不使用 Node build/runtime、CDN、外部字体或公网
+资源。页面、静态资源和 API 同源；`/admin/*` 使用 self-only CSP（不含
+`unsafe-eval`/`unsafe-inline`）和 `Cache-Control: no-store`。详细实施决策见
+`document/PolyGate_Policy_Editor轻量前端与云部署实施方案.md`。
+
 页面包含：
 
 - 管理员密钥输入；
 - active version 和系统状态；
 - Gateway Routing 参数；
-- high/low strategy 与首选 Provider 下拉框；
-- balanced 策略参数；
 - urgency scores；
 - scenario weights 和 defaults；
 - queue 参数；
@@ -619,10 +629,10 @@ kubectl port-forward service/automation 8020:8020
 - 发布前显示最终 diff；
 - 409 时要求重新加载；
 - Guardrails 使用锁定控件；
-- Provider 下拉框只展示当前 Registry 中 `kind=real` 的条目；
-- 选择 `prefer_provider` 时显示并要求对应 Provider 字段；
-- Preview 显示首选 Provider、实际模型、最终 Provider 和 fallback；
 - API 错误必须映射到具体字段。
+
+等 Provider Catalog 相关契约真正进入 `main` 后，再单独增加 Provider 下拉框、条件
+必填字段和 fallback 预览；该扩展不得阻塞 Task 7。
 
 ## 13. 决策卡片兼容
 

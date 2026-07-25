@@ -1,6 +1,6 @@
 # 【Task 7 交接】私有 Policy Editor — 依赖已全部就位,可以开工
 
-@D Task 7 的所有上游依赖已经合并进 `main`(当前 `def45de`)。Task 7 现在是**整条策略中心线路的唯一关键路径卡点**:Task 10(本地集成回归)只等它,而 Task 10 又挡着 Task 11(EKS 部署与演示证据)。
+@D Task 7 的所有上游依赖已经合并进 `main`(后端交接基线 `def45de`;截至本次前端方案修订为 `b2dd2ac`)。Task 7 现在是**整条策略中心线路的唯一关键路径卡点**:Task 10(本地集成回归)只等它,而 Task 10 又挡着 Task 11(EKS 部署与演示证据)。
 
 先同步进度:T1/T2/T3/T4/T5/T6/T8 已全部合并。Gateway 侧热加载(A)和 Worker 侧热加载(C,#44)都已上线,也就是说**你发布策略后,Gateway 和 Worker 会在 5 秒内自动生效**——演示主线上只差你这个界面。
 
@@ -14,12 +14,14 @@
 automation/admin/index.html
 automation/admin/policy-admin.js
 automation/admin/policy-admin.css
+automation/admin/vendor/alpine-csp.min.js
+automation/admin/vendor/README.md
 automation/tests/test_policy_admin_ui.py
 ```
 
-要改:`automation/app/main.py`(挂载静态资源)、`automation/Dockerfile`、`automation/README.md`。
+要改:`automation/app/main.py`(挂载静态资源和安全响应头)、`automation/README.md`。
 
-`automation/Dockerfile` 目前是 `COPY automation /app/automation`,所以 `automation/admin/` 会**自动**进镜像;Step 7 要你重新 build 是为了验证,不是因为要改 COPY 规则。
+`automation/Dockerfile` 目前是 `COPY automation /app/automation`,所以 `automation/admin/` 会**自动**进镜像;Step 7 要你重新 build 是为了验证,不是因为要改 COPY 规则。除非实测发现静态文件未进入镜像,否则不修改 Dockerfile,也不增加 Node build stage。
 
 `automation/app/main.py` 目前**没有**任何 `StaticFiles` 或 `/admin` 挂载——那是你 Step 2 的活。已有的 `/v1/admin/policies*` 是 API 路由(见下),不要和 UI 路径混淆。
 
@@ -152,7 +154,36 @@ preview   { policy: <draft>, gateway_cases: [...], priority_cases: [...] }
 
 ---
 
-## 六、本地怎么跑(有个坑)
+## 六、前端技术与云部署决策(2026-07-25 补充)
+
+最终实现采用:
+
+```text
+自托管 Alpine CSP build
++ 原生 HTML/CSS/JavaScript
++ 配置驱动的 Policy v1 表单
++ Fetch API
+```
+
+不采用 React、TypeScript、JSON Forms、XState、Zod、MSW 或独立 `admin-ui` Node 工程。详细决策见 `document/PolyGate_Policy_Editor轻量前端与云部署实施方案.md`。
+
+云部署约束:
+
+- Alpine 固定版本文件随仓库和 Automation 镜像发布,禁止 CDN;
+- `vendor/README.md` 记录版本、上游地址、SHA-256 和许可证;
+- 页面/API 同源,不增加 CORS;
+- `/admin/*` 返回 `Cache-Control: no-store`;
+- CSP 只允许 self,不出现 `unsafe-eval` 或 `unsafe-inline`;
+- Automation 保持 ClusterIP,仍通过 `kubectl port-forward service/automation 8020:8020` 访问;
+- 生产 key 仍只来自 Pod 内 `POLICY_ADMIN_KEY_FILE`,浏览器不能读取 Kubernetes Secret;
+- 页面不注册 service worker,无离线草稿或浏览器持久化;
+- 当前 Dockerfile 已包含静态目录,运行镜像不包含 Node。
+
+Preview 使用代码内固定、可审查的 gateway/priority cases;不做可编辑 case builder。只实现本交接列出的现有 Policy v1 API,不实现尚不存在的 provider catalog、capabilities、schema v2 或分页端点。
+
+---
+
+## 七、本地怎么跑(有个坑)
 
 ```bash
 docker compose up -d --build automation
@@ -171,7 +202,7 @@ docker run --rm -v "$PWD":/src -w /src polygate-automation:policy-ui sh -c 'pip 
 
 ---
 
-## 七、完成后
+## 八、完成后
 
 按计划 Step 8 提交,PR 里请注明第 1、2 点(validate 的 422 语义、错误信息不含值)是如何在 UI 上处理的——这两点最容易做成"用户看不懂哪里错了"。
 

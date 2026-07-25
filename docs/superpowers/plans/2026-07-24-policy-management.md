@@ -6,7 +6,7 @@
 
 **Architecture:** Automation remains the single Policy Control Plane and persists the active policy plus 20 versions in one Kubernetes ConfigMap, with Redis DB 0 used only as a rebuildable cache. Gateway and Worker load the mounted ConfigMap at startup, poll Automation every 5 seconds, validate before atomically swapping policy, and retain Last Known Good on failure. Grafana remains read-only and links to the private editor served by Automation.
 
-**Tech Stack:** Python 3.12, FastAPI 0.115, Pydantic 2.9, httpx 0.27, Redis 7, React-free static HTML/CSS/JavaScript editor, Kubernetes 1.34 ConfigMap/RBAC/Secret, Prometheus 3.13, Grafana 12.4, Docker `linux/amd64`, AWS EKS/ECR `us-east-1`.
+**Tech Stack:** Python 3.12, FastAPI 0.115, Pydantic 2.9, httpx 0.27, Redis 7, self-hosted Alpine CSP build with static HTML/CSS/JavaScript (no Node build/runtime), Kubernetes 1.34 ConfigMap/RBAC/Secret, Prometheus 3.13, Grafana 12.4, Docker `linux/amd64`, AWS EKS/ECR `us-east-1`.
 
 ## Global Constraints
 
@@ -15,6 +15,8 @@
 - Provider capability matching and unknown-provider rejection remain hard guardrails.
 - Policy Admin stays private behind `service/automation`; no NodePort, LoadBalancer, iframe, or Grafana App Plugin.
 - Admin writes require `Authorization: Bearer $POLICY_ADMIN_KEY`; the key is never logged or persisted by the browser.
+- Policy Admin has no CDN or other public runtime dependency; all scripts, styles, fonts, and icons are served by Automation.
+- Policy Admin responses use a self-only CSP without `unsafe-eval` or `unsafe-inline`, and use `Cache-Control: no-store`.
 - Kubernetes production wiring accepts the admin key only from `POLICY_ADMIN_KEY_FILE`. A plaintext `POLICY_ADMIN_KEY` fallback is allowed only when `POLICY_ALLOW_ENV_ADMIN_KEY=true`, which is reserved for local Compose.
 - ConfigMap `polygate-routing-policy` is the durable source; Redis is cache only.
 - Deployment may create the ConfigMap when absent but must never overwrite an existing ConfigMap.
@@ -1328,15 +1330,18 @@ git commit -m "feat(gateway): expose policy-aware routing simulation"
 - Create: `automation/admin/index.html`
 - Create: `automation/admin/policy-admin.js`
 - Create: `automation/admin/policy-admin.css`
+- Create: `automation/admin/vendor/alpine-csp.min.js`
+- Create: `automation/admin/vendor/README.md`
 - Create: `automation/tests/test_policy_admin_ui.py`
 - Modify: `automation/app/main.py`
-- Modify: `automation/Dockerfile`
 - Modify: `automation/README.md`
+- Verify only: `automation/Dockerfile` already copies the complete `automation/` directory.
 
 **Interfaces:**
 - Consumes: Task 1 examples and Task 3 Admin API.
 - Produces: `/admin/policies` static UI.
-- Does not use: localStorage, iframe, public Web NodePort, Grafana credentials.
+- Does not use: Node build/runtime, CDN, localStorage, iframe, public Web NodePort, Grafana credentials.
+- Detailed implementation decision: `document/PolyGate_Policy_Editor轻量前端与云部署实施方案.md`.
 
 - [ ] **Step 1: Write failing UI-serving tests**
 
@@ -1348,9 +1353,11 @@ assert response.status_code == 200
 assert "PolyGate Policy Management" in response.text
 assert "POLICY_ADMIN_KEY" not in response.text
 assert "localStorage" not in response.text
+assert "unsafe-eval" not in response.headers["Content-Security-Policy"]
+assert response.headers["Cache-Control"] == "no-store"
 ```
 
-Also request JS/CSS assets and require 200.
+Also request JS/CSS/local Alpine CSP assets and require 200. Assert that the HTML contains no CDN or other external resource URL.
 
 - [ ] **Step 2: Mount static assets**
 
@@ -1366,9 +1373,16 @@ app.mount(
 
 Serve `automation/admin/index.html` at `/admin/policies`.
 
+Add security headers to `/admin/*` responses:
+
+```text
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'
+Cache-Control: no-store
+```
+
 - [ ] **Step 3: Implement key-in-memory session**
 
-Use module state only:
+Use a private IIFE closure in `policy-admin.js`. Do not attach the key to `window` or place it in Alpine reactive state:
 
 ```javascript
 let adminKey = "";
@@ -1384,6 +1398,8 @@ function authHeaders() {
 Do not write the key to URL, localStorage, sessionStorage, cookies, console, DOM attributes, or error messages.
 
 - [ ] **Step 4: Implement editor sections**
+
+Use the pinned, self-hosted Alpine CSP build. Define the fixed Policy v1 controls as field metadata and render repeated Gateway, urgency, scenario, and queue controls with `x-for`. Do not add React, JSON Forms, XState, Zod, MSW, a Node package, or a browser-side template compiler that requires `unsafe-eval`.
 
 Render:
 
@@ -1401,6 +1417,8 @@ Version history
 ```
 
 Finance privacy must be a disabled `high` control. Publish button remains disabled until the current draft has a successful validate and preview result.
+
+Use fixed, version-controlled Gateway and priority cases for Preview. An editable simulation-case builder is outside Task 7.
 
 - [ ] **Step 5: Implement API transitions**
 
@@ -1430,6 +1448,11 @@ Tests must verify:
 - change note input exists;
 - Validate/Preview/Publish/History controls exist;
 - `localStorage` and `sessionStorage` strings are absent.
+- CSP contains neither `unsafe-eval` nor `unsafe-inline`;
+- HTML and first-party assets contain no CDN URL;
+- `Cache-Control: no-store` is present;
+- the pinned Alpine version, SHA-256, source, and license are recorded;
+- Compare and Rollback controls exist.
 
 - [ ] **Step 7: Build exact Automation image and smoke the page**
 
@@ -1443,10 +1466,14 @@ docker build \
 
 Run the Automation UI/API test suite in the image with contracts mounted.
 
+Smoke `/admin/policies`, `/admin/assets/policy-admin.js`, `/admin/assets/policy-admin.css`, and `/admin/assets/vendor/alpine-csp.min.js`. Browser Network must show no request to a host other than Automation. The existing `COPY automation /app/automation` includes these files, so no Node build stage or Dockerfile change is expected.
+
 - [ ] **Step 8: Commit**
 
 ```bash
-git add automation/admin automation/app/main.py automation/Dockerfile automation/tests automation/README.md
+git add automation/admin automation/app/main.py automation/tests automation/README.md \
+  document/PolyGate_Policy_Editor轻量前端与云部署实施方案.md \
+  docs/superpowers/plans/2026-07-24-policy-management.md
 git commit -m "feat(automation): add private policy editor"
 ```
 
