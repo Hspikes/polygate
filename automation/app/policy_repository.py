@@ -22,6 +22,14 @@ class PolicyConflict(Exception):
     """compare_and_swap 时，期望的 revision 与当前不一致——说明期间被别人改过。"""
 
 
+class RepositoryConflict(PolicyConflict):
+    """持久化层拒绝 compare-and-swap，因为底层版本已变化。"""
+
+
+class RepositoryUnavailable(Exception):
+    """持久化层暂时不可用，调用方可将其映射为服务不可用。"""
+
+
 @dataclass(frozen=True)
 class RepositorySnapshot:
     """一次读取的快照：文档内容 + 当时的 revision 戳。"""
