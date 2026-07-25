@@ -7,7 +7,8 @@ import uuid
 import redis
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,6 +17,7 @@ from automation.app.models import (
     AutomationIntent,
     GatewayMessage,
     GatewayRequest,
+    GatewaySimulationRequest,
     JobRecord,
     JobSubmission,
     JobState,
@@ -48,7 +50,7 @@ class PolicyPreviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     policy: PolicyDraft
-    gateway_cases: list[GatewayRequest] = Field(default_factory=list)
+    gateway_cases: list[GatewaySimulationRequest] = Field(default_factory=list)
     priority_cases: list[AutomationIntent] = Field(default_factory=list)
 
 
@@ -136,7 +138,8 @@ def _policy_router(
     def preview_policy(request: PolicyPreviewRequest, _: None = Depends(require_admin)) -> dict[str, object]:
         active = manager.active
         priority = manager.preview_priority(request.policy, request.priority_cases)
-        routing = gateway_simulator.simulate(request.policy, request.gateway_cases)
+        before_routing = gateway_simulator.simulate(active.policy, request.gateway_cases)
+        after_routing = gateway_simulator.simulate(request.policy, request.gateway_cases)
         return {
             "base_version": active.version,
             "diff": _policy_diff(
@@ -144,7 +147,14 @@ def _policy_router(
             ),
             "warnings": manager.validate(request.policy),
             "simulations": {
-                "routing": routing,
+                "routing": [
+                    {
+                        "case_id": f"{case.polygate.quality}-{case.polygate.privacy}",
+                        "before": before,
+                        "after": after,
+                    }
+                    for case, before, after in zip(request.gateway_cases, before_routing, after_routing)
+                ],
                 "priority": [simulation.__dict__ for simulation in priority],
                 "queue": {
                     "before_order": [
@@ -196,6 +206,7 @@ def _policy_router(
                 actor="policy-admin",
             )
         except ValueError as exc:
+            PUBLICATIONS.labels(action="rollback", result="rejected").inc()
             raise HTTPException(status_code=404, detail="policy version not found") from exc
         except PolicyConflict as exc:
             PUBLICATIONS.labels(action="rollback", result="rejected").inc()
@@ -292,6 +303,18 @@ def create_app(
     @app.exception_handler(PolicyConflict)
     def policy_conflict(_, __):
         return JSONResponse(status_code=409, content={"detail": "policy version conflict"})
+
+    @app.exception_handler(RequestValidationError)
+    def request_validation_error(request: Request, exc: RequestValidationError):
+        if request.url.path == "/v1/admin/policies/publish":
+            PUBLICATIONS.labels(action="publish", result="rejected").inc()
+        elif request.url.path.startswith("/v1/admin/policies/") and request.url.path.endswith("/rollback"):
+            PUBLICATIONS.labels(action="rollback", result="rejected").inc()
+        details = [
+            {key: error[key] for key in ("loc", "msg", "type") if key in error}
+            for error in exc.errors()
+        ]
+        return JSONResponse(status_code=422, content={"detail": details})
 
     @app.get("/health")
     def health() -> dict[str, str]:

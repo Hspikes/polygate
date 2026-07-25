@@ -24,6 +24,7 @@ class PolicyAdminAuthenticator:
         return cls(os.environ["POLICY_ADMIN_KEY"])
 
     def require(self, authorization: str | None) -> None:
-        supplied = authorization.removeprefix("Bearer ").strip() if authorization else ""
+        scheme, separator, credentials = authorization.partition(" ") if authorization else ("", "", "")
+        supplied = credentials.strip() if scheme == "Bearer" and separator else ""
         if not secrets.compare_digest(supplied, self._expected_key):
             raise HTTPException(status_code=401, detail="invalid policy administrator credentials")

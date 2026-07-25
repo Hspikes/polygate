@@ -21,7 +21,7 @@ from typing import Protocol
 
 import httpx
 
-from automation.app.models import AutomationIntent, GatewayRequest
+from automation.app.models import AutomationIntent, GatewaySimulationRequest
 from automation.app.policy_models import (
     PolicyDraft,
     PolicyStoreDocument,
@@ -68,7 +68,7 @@ class RedisPolicyCache:
 
 
 class GatewaySimulator(Protocol):
-    def simulate(self, draft: PolicyDraft, cases: list[GatewayRequest]) -> list[dict]: ...
+    def simulate(self, draft: PolicyDraft, cases: list[GatewaySimulationRequest]) -> list[dict]: ...
 
 
 class HttpGatewaySimulator:
@@ -76,14 +76,14 @@ class HttpGatewaySimulator:
         self._gateway_url = gateway_url.rstrip("/")
         self._client = client or httpx.Client(timeout=5.0)
 
-    def simulate(self, draft: PolicyDraft, cases: list[GatewayRequest]) -> list[dict]:
+    def simulate(self, draft: PolicyDraft, cases: list[GatewaySimulationRequest]) -> list[dict]:
         results: list[dict] = []
         for case in cases:
             try:
                 response = self._client.post(
                     f"{self._gateway_url}/internal/routing/simulate",
                     json={
-                        "request": case.model_dump(mode="json"),
+                        "request": case.model_dump(mode="json", exclude_none=True),
                         "gateway_policy": draft.gateway.model_dump(mode="json"),
                     },
                 )
