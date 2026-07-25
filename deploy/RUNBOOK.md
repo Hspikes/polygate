@@ -98,3 +98,32 @@ kubectl port-forward service/grafana 3000:3000
 Learner Lab 页面上 "Used $X of $100"，每天开工扫一眼记下来。
 EKS 控制面即使 `End Lab` 也持续计费（约 $0.10/小时），这是固定支出，
 如果哪天涨幅明显超出预期，检查是不是有资源没释放（比如忘记删的测试 Pod/PVC/LoadBalancer）。
+
+## 8. Policy Control Plane 检查
+
+Policy Store 是 ConfigMap 中的持久配置，不依赖 Redis。重新部署或重启 Automation
+前先确认资源存在，且不要手工用默认文件覆盖它：
+
+```bash
+kubectl get configmap polygate-routing-policy
+kubectl get serviceaccount,role,rolebinding polygate-policy-controller
+kubectl get secret polygate-policy-admin \
+  -o go-template='{{range $k,$v := .data}}{{printf "%s\n" $k}}{{end}}'
+```
+
+最后一条预期只显示 key 名 `admin-key`，不要打印 Secret 值。验证最小权限：
+
+```bash
+kubectl auth can-i get configmap/polygate-routing-policy \
+  --as=system:serviceaccount:default:polygate-policy-controller
+kubectl auth can-i update configmap/polygate-routing-policy \
+  --as=system:serviceaccount:default:polygate-policy-controller
+kubectl auth can-i list configmaps \
+  --as=system:serviceaccount:default:polygate-policy-controller
+kubectl auth can-i get secrets \
+  --as=system:serviceaccount:default:polygate-policy-controller
+```
+
+预期依次为 `yes / yes / no / no`。如果 Automation 或 Redis 重启，Policy active
+version 与历史应保持不变；若 ConfigMap 意外缺失，应先确认没有可恢复的版本历史，
+再由部署脚本重新创建初始 store。

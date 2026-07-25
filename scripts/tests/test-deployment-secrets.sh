@@ -24,11 +24,26 @@ set -euo pipefail
 printf '%s\n' "$*" >>"$KUBECTL_LOG"
 
 if [ "${1:-}" = "get" ] && [ "${2:-}" = "secret" ]; then
-  if [ "${MOCK_SECRET_EXISTS:-0}" != "1" ]; then
-    exit 1
-  fi
-  printf '%s' "${MOCK_SECRET_KEYS:-}"
-  exit 0
+  case "${3:-}" in
+    gateway-client-secrets)
+      if [ "${MOCK_SECRET_EXISTS:-0}" != "1" ]; then
+        exit 1
+      fi
+      printf '%s' "${MOCK_SECRET_KEYS:-}"
+      exit 0
+      ;;
+    polygate-policy-admin)
+      if [ "${MOCK_POLICY_SECRET_EXISTS:-0}" != "1" ]; then
+        exit 1
+      fi
+      if [[ "$*" == *'{{len (index .data "admin-key")}}'* ]]; then
+        printf '%s' "${MOCK_POLICY_SECRET_VALUE_LENGTH:-0}"
+      else
+        printf '%s' "${MOCK_POLICY_SECRET_KEYS:-}"
+      fi
+      exit 0
+      ;;
+  esac
 fi
 
 if [ "${1:-}" = "config" ] && [ "${2:-}" = "current-context" ]; then
@@ -72,7 +87,10 @@ run_deploy() {
   local include_automation="$1"
   local secret_exists="$2"
   local secret_keys="$3"
-  local output_file="$4"
+  local policy_secret_exists="$4"
+  local policy_secret_keys="$5"
+  local policy_secret_value_length="$6"
+  local output_file="$7"
 
   : >"$KUBECTL_LOG"
   set +e
@@ -80,6 +98,9 @@ run_deploy() {
     KUBECTL_LOG="$KUBECTL_LOG" \
     MOCK_SECRET_EXISTS="$secret_exists" \
     MOCK_SECRET_KEYS="$secret_keys" \
+    MOCK_POLICY_SECRET_EXISTS="$policy_secret_exists" \
+    MOCK_POLICY_SECRET_KEYS="$policy_secret_keys" \
+    MOCK_POLICY_SECRET_VALUE_LENGTH="$policy_secret_value_length" \
     IMAGE_TAG="review-secret-gate" \
     INCLUDE_AUTOMATION="$include_automation" \
     "$DEPLOY_SCRIPT" >"$output_file" 2>&1
@@ -89,7 +110,7 @@ run_deploy() {
 }
 
 MISSING_SECRET_OUTPUT="$TEST_DIR/missing-secret.out"
-if run_deploy 0 0 "" "$MISSING_SECRET_OUTPUT"; then
+if run_deploy 0 0 "" 0 "" 0 "$MISSING_SECRET_OUTPUT"; then
   fail "deployment unexpectedly succeeded without gateway-client-secrets"
 fi
 assert_contains \
@@ -98,14 +119,15 @@ assert_contains \
 assert_no_mutation
 
 MISSING_WEB_KEY_OUTPUT="$TEST_DIR/missing-web-key.out"
-if run_deploy 0 1 $'api-keys\n' "$MISSING_WEB_KEY_OUTPUT"; then
+if run_deploy 0 1 $'api-keys\n' 0 "" 0 "$MISSING_WEB_KEY_OUTPUT"; then
   fail "deployment unexpectedly succeeded without web-api-key"
 fi
 assert_contains "$(cat "$MISSING_WEB_KEY_OUTPUT")" "web-api-key"
 assert_no_mutation
 
 NO_AUTOMATION_OUTPUT="$TEST_DIR/no-automation.out"
-if run_deploy 0 1 $'api-keys\nweb-api-key\n' "$NO_AUTOMATION_OUTPUT"; then
+if run_deploy \
+  0 1 $'api-keys\nweb-api-key\n' 0 "" 0 "$NO_AUTOMATION_OUTPUT"; then
   fail "deployment unexpectedly passed the intentionally unavailable Metrics API"
 fi
 assert_contains \
@@ -117,14 +139,48 @@ fi
 assert_no_mutation
 
 MISSING_WORKER_KEY_OUTPUT="$TEST_DIR/missing-worker-key.out"
-if run_deploy 1 1 $'api-keys\nweb-api-key\n' "$MISSING_WORKER_KEY_OUTPUT"; then
+if run_deploy \
+  1 1 $'api-keys\nweb-api-key\n' 0 "" 0 "$MISSING_WORKER_KEY_OUTPUT"; then
   fail "deployment unexpectedly succeeded without worker-api-key"
 fi
 assert_contains "$(cat "$MISSING_WORKER_KEY_OUTPUT")" "worker-api-key"
 assert_no_mutation
 
+MISSING_POLICY_SECRET_OUTPUT="$TEST_DIR/missing-policy-secret.out"
+if run_deploy \
+  1 1 $'api-keys\nweb-api-key\nworker-api-key\n' \
+  0 "" 0 "$MISSING_POLICY_SECRET_OUTPUT"; then
+  fail "deployment unexpectedly succeeded without polygate-policy-admin"
+fi
+assert_contains \
+  "$(cat "$MISSING_POLICY_SECRET_OUTPUT")" \
+  "Missing Secret default/polygate-policy-admin"
+assert_no_mutation
+
+MISSING_ADMIN_KEY_OUTPUT="$TEST_DIR/missing-admin-key.out"
+if run_deploy \
+  1 1 $'api-keys\nweb-api-key\nworker-api-key\n' \
+  1 $'unrelated-key\n' 0 "$MISSING_ADMIN_KEY_OUTPUT"; then
+  fail "deployment unexpectedly succeeded without policy admin-key"
+fi
+assert_contains "$(cat "$MISSING_ADMIN_KEY_OUTPUT")" "admin-key"
+assert_no_mutation
+
+EMPTY_ADMIN_KEY_OUTPUT="$TEST_DIR/empty-admin-key.out"
+if run_deploy \
+  1 1 $'api-keys\nweb-api-key\nworker-api-key\n' \
+  1 $'admin-key\n' 0 "$EMPTY_ADMIN_KEY_OUTPUT"; then
+  fail "deployment unexpectedly succeeded with an empty policy admin-key"
+fi
+assert_contains \
+  "$(cat "$EMPTY_ADMIN_KEY_OUTPUT")" \
+  "Secret default/polygate-policy-admin has an empty required key: admin-key"
+assert_no_mutation
+
 ALL_KEYS_OUTPUT="$TEST_DIR/all-keys.out"
-if run_deploy 1 1 $'api-keys\nweb-api-key\nworker-api-key\n' "$ALL_KEYS_OUTPUT"; then
+if run_deploy \
+  1 1 $'api-keys\nweb-api-key\nworker-api-key\n' \
+  1 $'admin-key\n' 32 "$ALL_KEYS_OUTPUT"; then
   fail "deployment unexpectedly passed the intentionally unavailable Metrics API"
 fi
 assert_contains \
