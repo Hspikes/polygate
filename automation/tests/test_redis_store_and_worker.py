@@ -33,7 +33,12 @@ from automation.app.models import (
     PreviewResponse,
     Snippets,
 )
-from automation.app.redis_store import RedisAutomationStore
+from automation.app.policy_models import QueuePolicy
+from automation.app.redis_store import (
+    DEFAULT_QUEUE_POLICY,
+    RedisAutomationStore,
+    waiting_bonus,
+)
 from automation.app import worker as worker_module
 
 
@@ -133,28 +138,63 @@ class PriorityOrderingTest(RedisStoreTestBase):
 
 
 class FairnessStarvationTest(RedisStoreTestBase):
-    def test_low_priority_forced_after_streak_and_wait(self):
-        # 连续放 3 个 critical 任务，模拟"已经连续执行了 3 个 critical/high"
-        for i in range(3):
+    def _drive_streak(self, count: int, queue_policy=None):
+        """连续领走 count 个 critical 任务，把 streak 顶上去。"""
+        for i in range(count):
             preview = _make_preview(f"preview_high_{i}", "critical", 140)
             self.store.save_preview(preview)
             self.store.enqueue(preview, idempotency_key=f"high-key-{i}")
-            claimed = self.store.claim_next_job(lease_seconds=60)
+            claimed = self.store.claim_next_job(lease_seconds=60, queue_policy=queue_policy)
             self.assertEqual(claimed.priority.class_.value, "critical")
 
-        streak = int(self.client.get(self.store._k("queue", "streak")) or 0)
-        self.assertGreaterEqual(streak, 3)
-
-        # 现在放一个 low 任务，但把它的 created_at 手动改到 25 秒前，
-        # 模拟"已经等了超过 20 秒"
+    def _enqueue_starved_low(self, waited_seconds: int):
         low_preview = _make_preview("preview_low_starved", "low", 5)
         self.store.save_preview(low_preview)
         low_job = self.store.enqueue(low_preview, idempotency_key="low-starved-key")
-        low_job.created_at = datetime.now(UTC) - timedelta(seconds=25)
+        low_job.created_at = datetime.now(UTC) - timedelta(seconds=waited_seconds)
         self.store._save_job(low_job)
+        return low_job
 
-        # 再放一个 critical 任务，正常情况下分数更高应该被选中，
-        # 但防饥饿机制应该强制选中等待够久的 low 任务
+    def test_low_priority_forced_after_streak_and_wait_with_injected_policy(self):
+        """注入的 starvation 参数应当立刻生效，而不是沿用 v1 的 3 次/20 秒。"""
+        policy = QueuePolicy(
+            waiting_bonus_interval_seconds=1,
+            waiting_bonus_points=20,
+            waiting_bonus_cap=100,
+            starvation_streak_threshold=2,
+            starvation_wait_seconds=3,
+        )
+
+        # 只驱动 2 个 critical——在 v1 默认（阈值 3）下还不足以触发防饥饿
+        self._drive_streak(2, queue_policy=policy)
+        streak = int(self.client.get(self.store._k("queue", "streak")) or 0)
+        self.assertEqual(streak, 2)
+
+        # 只等 5 秒——在 v1 默认（20 秒）下也不够
+        low_job = self._enqueue_starved_low(waited_seconds=5)
+
+        high_preview = _make_preview("preview_high_again", "critical", 140)
+        self.store.save_preview(high_preview)
+        self.store.enqueue(high_preview, idempotency_key="high-key-again")
+
+        claimed = self.store.claim_next_job(lease_seconds=60, queue_policy=policy)
+        self.assertEqual(claimed.job_id, low_job.job_id, "注入的防饥饿阈值应当立刻生效")
+
+        streak_after = int(self.client.get(self.store._k("queue", "streak")) or 0)
+        self.assertEqual(streak_after, 0)
+
+    def test_v1_defaults_reproduce_legacy_fairness_behavior(self):
+        """回归护栏：不传 queue_policy 时，行为必须与 Task 4 改造前逐位一致。
+
+        这是整个 Task 4 最重要的一个测试——它证明参数化没有偷偷改变
+        既有生产行为（3 次连续 critical + 等待 20 秒才触发防饥饿）。
+        """
+        self._drive_streak(3)
+        streak = int(self.client.get(self.store._k("queue", "streak")) or 0)
+        self.assertGreaterEqual(streak, 3)
+
+        low_job = self._enqueue_starved_low(waited_seconds=25)
+
         high_preview = _make_preview("preview_high_again", "critical", 140)
         self.store.save_preview(high_preview)
         self.store.enqueue(high_preview, idempotency_key="high-key-again")
@@ -162,9 +202,112 @@ class FairnessStarvationTest(RedisStoreTestBase):
         claimed = self.store.claim_next_job(lease_seconds=60)
         self.assertEqual(claimed.job_id, low_job.job_id, "防饥饿机制应该强制选中等待够久的低优先级任务")
 
-        # 执行完低优先级任务后，streak 应该清零
         streak_after = int(self.client.get(self.store._k("queue", "streak")) or 0)
         self.assertEqual(streak_after, 0)
+
+    def test_starvation_below_injected_threshold_does_not_trigger(self):
+        """阈值调高后，原本会触发的 streak 不应再触发覆盖。"""
+        policy = QueuePolicy(
+            waiting_bonus_interval_seconds=5,
+            waiting_bonus_points=1,
+            waiting_bonus_cap=30,
+            starvation_streak_threshold=10,
+            starvation_wait_seconds=20,
+        )
+        self._drive_streak(3, queue_policy=policy)
+        low_job = self._enqueue_starved_low(waited_seconds=25)
+
+        high_preview = _make_preview("preview_high_again", "critical", 140)
+        self.store.save_preview(high_preview)
+        self.store.enqueue(high_preview, idempotency_key="high-key-again")
+
+        claimed = self.store.claim_next_job(lease_seconds=60, queue_policy=policy)
+        self.assertNotEqual(claimed.job_id, low_job.job_id)
+        self.assertEqual(claimed.priority.class_.value, "critical")
+
+
+class DynamicWaitingBonusTest(RedisStoreTestBase):
+    def _enqueue_aged_low(self, waited_seconds: int):
+        preview = _make_preview("preview_low_aged", "low", 10)
+        self.store.save_preview(preview)
+        job = self.store.enqueue(preview, idempotency_key="low-aged-key")
+        job.created_at = datetime.now(UTC) - timedelta(seconds=waited_seconds)
+        self.store._save_job(job)
+        return job
+
+    def _enqueue_fresh_critical(self):
+        preview = _make_preview("preview_critical_fresh", "critical", 140)
+        self.store.save_preview(preview)
+        return self.store.enqueue(preview, idempotency_key="critical-fresh-key")
+
+    def test_waiting_bonus_points_change_claim_order(self):
+        low_job = self._enqueue_aged_low(waited_seconds=10)
+        critical_job = self._enqueue_fresh_critical()
+
+        # v1 默认：low = 10 + min(30, 1 * 2) = 12，critical = 140 胜出
+        generous = QueuePolicy(
+            waiting_bonus_interval_seconds=1,
+            waiting_bonus_points=20,
+            waiting_bonus_cap=1000,
+            starvation_streak_threshold=3,
+            starvation_wait_seconds=20,
+        )
+        # 调整后：low = 10 + min(1000, 20 * 10) = 210，反超 critical
+        claimed = self.store.claim_next_job(lease_seconds=60, queue_policy=generous)
+        self.assertEqual(claimed.job_id, low_job.job_id)
+
+        # 已排队任务的 initial_score 不得被改写
+        self.assertEqual(claimed.priority.initial_score, 10)
+        self.assertEqual(self.store.get_job(critical_job.job_id).priority.initial_score, 140)
+
+    def test_v1_defaults_keep_critical_first(self):
+        """同样的两个任务，在 v1 默认参数下 critical 仍然胜出。"""
+        self._enqueue_aged_low(waited_seconds=10)
+        critical_job = self._enqueue_fresh_critical()
+
+        claimed = self.store.claim_next_job(lease_seconds=60)
+        self.assertEqual(claimed.job_id, critical_job.job_id)
+
+    def test_waiting_bonus_cap_limits_bonus(self):
+        """cap 的单位是分数，不是区间数：10 秒 × 10 分应被 cap 到 5。"""
+        self._enqueue_aged_low(waited_seconds=10)
+        critical_job = self._enqueue_fresh_critical()
+
+        capped = QueuePolicy(
+            waiting_bonus_interval_seconds=1,
+            waiting_bonus_points=10,
+            waiting_bonus_cap=5,
+            starvation_streak_threshold=3,
+            starvation_wait_seconds=20,
+        )
+        # low = 10 + 5 = 15 < 140
+        claimed = self.store.claim_next_job(lease_seconds=60, queue_policy=capped)
+        self.assertEqual(claimed.job_id, critical_job.job_id)
+
+
+class WaitingBonusArithmeticTest(unittest.TestCase):
+    """纯函数，不需要 Redis。"""
+
+    def test_v1_defaults_reproduce_legacy_arithmetic(self):
+        # 改造前是 min(30, int(waited // 5))
+        for waited, expected in [(0, 0), (4.9, 0), (5, 1), (14, 2), (150, 30), (10_000, 30)]:
+            with self.subTest(waited=waited):
+                self.assertEqual(waiting_bonus(waited, DEFAULT_QUEUE_POLICY), expected)
+                self.assertEqual(waiting_bonus(waited, DEFAULT_QUEUE_POLICY), min(30, int(waited // 5)))
+
+    def test_points_multiply_intervals(self):
+        policy = QueuePolicy(
+            waiting_bonus_interval_seconds=2,
+            waiting_bonus_points=7,
+            waiting_bonus_cap=1000,
+            starvation_streak_threshold=3,
+            starvation_wait_seconds=20,
+        )
+        self.assertEqual(waiting_bonus(6, policy), 21)
+
+    def test_negative_wait_is_clamped(self):
+        """时钟偏斜或未来时间戳不应产生负 bonus。"""
+        self.assertEqual(waiting_bonus(-100, DEFAULT_QUEUE_POLICY), 0)
 
 
 class ExecutionPayloadTest(RedisStoreTestBase):
