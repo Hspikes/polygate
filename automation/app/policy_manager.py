@@ -38,6 +38,17 @@ from automation.app.policy_repository import (
 MAX_VERSIONS = 20
 
 
+def disambiguate_case_id(slug: str, slug_counts: dict[str, int]) -> str:
+    """给重复出现的 case slug 追加出现序号，保证 case_id 在一次 preview 内唯一。
+
+    routing 和 priority 两组模拟共用这个规则：case_id 是 Policy Editor 用来索引
+    before/after 的键，重复会让行互相覆盖。slug_counts 由调用方持有并复用。
+    """
+    slug_counts[slug] = slug_counts.get(slug, 0) + 1
+    occurrence = slug_counts[slug]
+    return slug if occurrence == 1 else f"{slug}-{occurrence}"
+
+
 class PolicyConflictError(PolicyConflict):
     """publish/rollback 时 base_version 已过期（不是当前 active 版本）。"""
 
@@ -172,11 +183,9 @@ class PolicyManager:
                 f"{intent.urgency.value}-"
                 f"{intent.scenario.value.replace('_', '-')}"
             )
-            slug_counts[slug] = slug_counts.get(slug, 0) + 1
-            occurrence = slug_counts[slug]
             results.append(
                 PrioritySimulation(
-                    case_id=slug if occurrence == 1 else f"{slug}-{occurrence}",
+                    case_id=disambiguate_case_id(slug, slug_counts),
                     before_score=before,
                     after_score=after,
                 )

@@ -160,6 +160,61 @@ def test_preview_uses_gateway_simulator_without_writing_repository(api):
     assert len(simulator.calls) == 2
 
 
+def test_preview_routing_case_ids_stay_unique_when_cases_repeat(api):
+    """case_id 是 Policy Editor 索引 before/after 的键，重复会让行互相覆盖。
+
+    routing 的 slug 只有 quality×privacy 六种取值，所以两个相同偏好的
+    gateway case 必然撞车；priority 已经用出现序号消歧，routing 必须一致。
+    """
+    client, _, _ = api
+    case = {
+        "model": "auto",
+        "messages": [{"role": "user", "content": "simulate"}],
+        "polygate": {
+            "quality": "balanced",
+            "privacy": "standard",
+            "max_cost_usd": 0.01,
+            "latency_target_ms": 1000,
+        },
+    }
+    intent = {
+        "employee": "smoke",
+        "department": "engineering",
+        "scenario": "production_incident",
+        "urgency": "critical",
+        "prompt": "duplicate intent",
+        "preferences": {
+            "quality": "high",
+            "privacy": "standard",
+            "max_cost_usd": 0.01,
+            "latency_target_ms": 1000,
+        },
+    }
+
+    response = client.post(
+        "/v1/admin/policies/preview",
+        headers=ADMIN_HEADERS,
+        json={
+            "policy": copy.deepcopy(EXAMPLES["draft"]),
+            "gateway_cases": [case, copy.deepcopy(case), copy.deepcopy(case)],
+            "priority_cases": [intent, copy.deepcopy(intent)],
+        },
+    )
+
+    assert response.status_code == 200
+    simulations = response.json()["simulations"]
+    routing_ids = [entry["case_id"] for entry in simulations["routing"]]
+    priority_ids = [entry["case_id"] for entry in simulations["priority"]]
+
+    assert routing_ids == ["balanced-standard", "balanced-standard-2", "balanced-standard-3"]
+    assert len(set(routing_ids)) == len(routing_ids)
+    assert priority_ids == [
+        "critical-production-incident",
+        "critical-production-incident-2",
+    ]
+    assert len(set(priority_ids)) == len(priority_ids)
+
+
 def test_preview_priority_uses_the_same_captured_active_snapshot_as_diff_and_routing():
     class ActiveChangesAfterCaptureManager(PolicyManager):
         def __init__(self, repository):

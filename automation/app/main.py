@@ -29,6 +29,7 @@ from automation.app.models import (
 from automation.app.kubernetes_policy_repository import KubernetesConfigMapPolicyRepository
 from automation.app.policy_auth import PolicyAdminAuthenticator
 from automation.app.policy_manager import (
+    disambiguate_case_id,
     GatewaySimulationUnavailable,
     GatewaySimulator,
     HttpGatewaySimulator,
@@ -152,6 +153,7 @@ def _policy_router(
         )
         before_routing = gateway_simulator.simulate(active.policy, request.gateway_cases)
         after_routing = gateway_simulator.simulate(request.policy, request.gateway_cases)
+        routing_slug_counts: dict[str, int] = {}
         return {
             "base_version": active.version,
             "diff": _policy_diff(
@@ -161,7 +163,10 @@ def _policy_router(
             "simulations": {
                 "routing": [
                     {
-                        "case_id": f"{case.polygate.quality}-{case.polygate.privacy}",
+                        "case_id": disambiguate_case_id(
+                            f"{case.polygate.quality}-{case.polygate.privacy}",
+                            routing_slug_counts,
+                        ),
                         "before": before,
                         "after": after,
                     }
