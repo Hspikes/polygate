@@ -93,6 +93,9 @@ spec:
             - { name: PROVIDER_RETRY_BASE_DELAY_SECONDS, value: "0.5" }
             - { name: PROVIDER_RETRY_MAX_BACKOFF_SECONDS, value: "5" }
             - { name: DECISION_RECORD_TTL_SECONDS, value: "3600" }
+            - { name: POLICY_FILE, value: "/config/policy-store.json" }
+            - { name: POLICY_API_URL, value: "http://automation:8020" }
+            - { name: POLICY_REFRESH_SECONDS, value: "5" }
             - name: REAL_A_API_KEY
               valueFrom: { secretKeyRef: { name: provider-secrets, key: real-a-key, optional: true } }
             - name: POLYGATE_API_KEYS
@@ -103,10 +106,20 @@ spec:
             limits:   { cpu: "500m", memory: "512Mi" }
           readinessProbe: { httpGet: { path: /health, port: 8000 }, initialDelaySeconds: 5, periodSeconds: 5 }
           livenessProbe:  { httpGet: { path: /health, port: 8000 }, initialDelaySeconds: 10, periodSeconds: 10 }
-          volumeMounts: [{ name: cfg, mountPath: /config }]
+          volumeMounts:
+            - { name: cfg, mountPath: /config, readOnly: true }
       volumes:
         - name: cfg
-          configMap: { name: providers-config }
+          projected:
+            sources:
+              - configMap:
+                  name: providers-config
+                  items:
+                    - { key: providers.yaml, path: providers.yaml }
+              - configMap:
+                  name: polygate-routing-policy
+                  items:
+                    - { key: policy-store.json, path: policy-store.json }
 ---
 apiVersion: v1
 kind: Service
