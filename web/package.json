@@ -2,6 +2,9 @@
   "name": "polygate-web",
   "private": true,
   "version": "0.2.0",
+  "engines": {
+    "node": "^20.19 || ^22.12 || ^24"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
