@@ -64,6 +64,36 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_pod_node_name]
         target_label: node
 
+  # Discover the private Automation API (Policy control plane) on its own port.
+  # It exposes the control-plane side of the policy metrics: active version,
+  # publication outcomes, and last publish timestamp.
+  - job_name: polygate-automation-api
+    metrics_path: /metrics
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - default
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        regex: automation
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_phase]
+        regex: Running
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_container_name]
+        regex: automation
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        regex: "8020"
+        action: keep
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        target_label: node
+
   # kube-state-metrics exposes Deployment, Pod, and HPA object state.
   - job_name: kube-state-metrics
     static_configs:
