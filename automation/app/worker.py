@@ -34,6 +34,7 @@ import httpx
 import redis
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
+from automation.app.policy_runtime import PolicyRuntime
 from automation.app.redis_store import RedisAutomationStore
 
 logging.basicConfig(level=logging.INFO, format='{"ts":"%(asctime)s","lvl":"%(levelname)s","msg":%(message)s}')
@@ -160,7 +161,10 @@ def execute_job(store: RedisAutomationStore, job) -> None:
         _last_heartbeat = time.time()
 
 
-def worker_loop(store: RedisAutomationStore) -> None:
+def worker_loop(
+    store: RedisAutomationStore,
+    policy_runtime: PolicyRuntime | None = None,
+) -> None:
     log.info('{"event":"worker_started"}')
     last_reap = 0.0
     with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
@@ -184,7 +188,11 @@ def worker_loop(store: RedisAutomationStore) -> None:
                 time.sleep(POLL_INTERVAL_SECONDS)
                 continue
 
-            job = store.claim_next_job(lease_seconds=LEASE_SECONDS)
+            # 每轮都重新取一次快照——这个迭代边界就是队列参数热更新的生效点。
+            job = store.claim_next_job(
+                lease_seconds=LEASE_SECONDS,
+                queue_policy=policy_runtime.queue_policy() if policy_runtime is not None else None,
+            )
             if job is None:
                 time.sleep(POLL_INTERVAL_SECONDS)
                 continue
@@ -240,8 +248,20 @@ def main():
     redis_client = redis.Redis.from_url(REDIS_URL)
     store = RedisAutomationStore(redis_client)
 
+    # 在起 health server 之前构造，避免 /metrics 出现空注册表的窗口。
+    # 拿不到策略时 PolicyRuntime 会抛 PolicyLoadError 让进程退出——策略是调度
+    # 正确性的来源，静默用默认值等于隐藏配置错误。
+    policy_runtime = PolicyRuntime()
+    # 挂载文件可能落后于 API（Compose 下文件不会被写回），先主动拉一次。
+    policy_runtime.refresh_once()
+    policy_runtime.start(_shutdown_requested)
+
     threading.Thread(target=_run_health_server, daemon=True).start()
-    worker_loop(store)
+    try:
+        worker_loop(store, policy_runtime)
+    finally:
+        policy_runtime.join(timeout=5)
+        policy_runtime.close()
 
 
 if __name__ == "__main__":

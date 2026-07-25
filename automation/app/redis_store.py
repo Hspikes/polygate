@@ -27,6 +27,31 @@ from datetime import UTC, datetime
 import redis
 
 from automation.app.models import JobRecord, JobState, PreviewResponse
+from automation.app.policy_models import QueuePolicy
+
+# Task 4 之前这五个数字是 claim_next_job 上的类常量。保留为默认值，语义是
+# "v1 基线"，与 contracts/policy-examples.json 里 automation.queue 的取值一致；
+# 不传 queue_policy 的调用方（既有测试、未接策略的部署）行为不变。
+DEFAULT_QUEUE_POLICY = QueuePolicy(
+    waiting_bonus_interval_seconds=5,
+    waiting_bonus_points=1,
+    waiting_bonus_cap=30,
+    starvation_streak_threshold=3,
+    starvation_wait_seconds=20,
+)
+
+
+def waiting_bonus(waited_seconds: float, policy: QueuePolicy) -> int:
+    """等待奖励分：每满 interval 秒加 points 分，总量不超过 cap 分。
+
+    cap 的单位是分数而不是区间数（contracts/policy.schema.json 允许 cap 到
+    1000、points 到 100）。用 v1 默认值代入即 min(30, int(waited // 5))，
+    与 Task 4 改造前的算术逐位相同。
+
+    max(0.0, ...) 防的是时钟偏斜或未来时间戳导致的负奖励。
+    """
+    intervals = int(max(0.0, waited_seconds) // policy.waiting_bonus_interval_seconds)
+    return min(policy.waiting_bonus_cap, policy.waiting_bonus_points * intervals)
 
 PREVIEW_TTL_SECONDS_DEFAULT = 900
 IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60
@@ -152,25 +177,24 @@ class RedisAutomationStore:
     # ---------- 优先级队列（按 A 确认的方案实现，2026-07-23 对齐） ----------
     #
     # effective_priority = initial_score + waiting_bonus
-    #   waiting_bonus：每等待 5 秒 +1 分，最多 +30 分
+    #   waiting_bonus：每等待 interval 秒 +points 分，最多 +cap 分
     # 同分按创建时间 FIFO（更早创建的优先）
-    # 防饥饿：连续选中 3 个 critical/high 之后，如果有 normal/low 已经等了
-    #   至少 20 秒，强制选等待最久的那个（忽略 effective_priority 排名），
-    #   选完之后 streak 清零
+    # 防饥饿：连续选中 streak_threshold 个 critical/high 之后，如果有 normal/low
+    #   已经等了至少 starvation_wait_seconds，强制选等待最久的那个
+    #   （忽略 effective_priority 排名），选完之后 streak 清零
     #
-    # 注意：这里假设 PriorityDecision 的字段名是 `class_`（因为 `class` 是
-    # Python 关键字，猜测和 Snippets 里 `json_` 的命名方式一致）和
-    # `initial_score`——这个假设需要对照实际的 PriorityDecision 模型源码
-    # 核实一下，如果字段名不对，下面这几行要跟着改。
+    # Task 4 起这五个数字不再硬编码，而是由 QueuePolicy 传入并支持热更新；
+    # 不传时退回 DEFAULT_QUEUE_POLICY（与改造前的常量逐位一致）。
     _CRITICAL_HIGH = {"critical", "high"}
-    _WAITING_BONUS_CAP = 30
-    _WAITING_BONUS_PER_SECONDS = 5
-    _STARVATION_STREAK_THRESHOLD = 3
-    _STARVATION_WAIT_SECONDS = 20
 
-    def claim_next_job(self, lease_seconds: int = 60) -> JobRecord | None:
+    def claim_next_job(
+        self,
+        lease_seconds: int = 60,
+        queue_policy: QueuePolicy | None = None,
+    ) -> JobRecord | None:
         """Worker 每次调用（大约每 1 秒一次"准入窗口"）时，从当前所有排队中
         的任务里，按 effective_priority 选出一个执行，并附带防饥饿机制。"""
+        policy = queue_policy or DEFAULT_QUEUE_POLICY
         pending_ids = self.r.smembers(self._k("queue", "pending"))
         if not pending_ids:
             return None
@@ -187,8 +211,7 @@ class RedisAutomationStore:
             initial_score = getattr(record.priority, "initial_score", 0)
             created_ts = record.created_at.timestamp()
             waited = now - created_ts
-            waiting_bonus = min(self._WAITING_BONUS_CAP, int(waited // self._WAITING_BONUS_PER_SECONDS))
-            effective_priority = initial_score + waiting_bonus
+            effective_priority = initial_score + waiting_bonus(waited, policy)
             candidates.append((job_id, record, priority_class, effective_priority, created_ts, waited))
 
         if not candidates:
@@ -197,10 +220,10 @@ class RedisAutomationStore:
         streak = int(self.r.get(self._k("queue", "streak")) or 0)
 
         chosen = None
-        if streak >= self._STARVATION_STREAK_THRESHOLD:
+        if streak >= policy.starvation_streak_threshold:
             starved = [
                 c for c in candidates
-                if c[2] not in self._CRITICAL_HIGH and c[5] >= self._STARVATION_WAIT_SECONDS
+                if c[2] not in self._CRITICAL_HIGH and c[5] >= policy.starvation_wait_seconds
             ]
             if starved:
                 chosen = max(starved, key=lambda c: c[5])  # 等待最久的那个
