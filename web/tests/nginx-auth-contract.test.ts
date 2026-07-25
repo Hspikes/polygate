@@ -11,12 +11,24 @@ function locationBody(path: string): string {
 
 describe("Nginx Web authentication boundary", () => {
   it("overwrites /api credentials with the runtime-only Web identity", () => {
-    expect(locationBody("/api/")).toContain(
+    expect(locationBody("/api/v1/")).toContain(
       "proxy_set_header Authorization $web_gateway_authorization;",
     );
     expect(nginxConfig).toContain('map "${WEB_GATEWAY_API_KEY}"');
     expect(dockerfile).toContain("/etc/nginx/templates/default.conf.template");
     expect(dockerfile).toContain('NGINX_ENVSUBST_FILTER="^WEB_GATEWAY_API_KEY$"');
+  });
+
+  it("only proxies the /v1 surface and denies the rest of /api", () => {
+    // The Web identity is injected on this block, so a blanket /api/ proxy would
+    // hand anonymous visitors the Gateway's /metrics, /openapi.json, /docs and
+    // /internal/routing/simulate under Web's credential.
+    expect(nginxConfig).toContain("location /api/v1/ {");
+    expect(locationBody("/api/v1/")).toContain(
+      "proxy_pass http://gateway:8000/v1/;",
+    );
+    expect(locationBody("/api/")).toContain("return 404;");
+    expect(locationBody("/api/")).not.toContain("proxy_pass");
   });
 
   it("continues to forward each public /v1 client's own credential", () => {
@@ -36,7 +48,7 @@ describe("Nginx Web authentication boundary", () => {
   });
 
   it("keeps the authenticated /api proxy unbuffered for browser SSE", () => {
-    const api = locationBody("/api/");
+    const api = locationBody("/api/v1/");
     expect(api).toContain("proxy_buffering off;");
     expect(api).toContain("proxy_request_buffering off;");
     expect(api).toContain("proxy_cache off;");

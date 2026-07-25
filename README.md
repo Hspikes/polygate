@@ -110,6 +110,81 @@ request ID，且这些决策数据不会进入模型 Prompt。无真实模型、
   必须使用 `--platform linux/amd64`。
 - 监控页面是管理员内部工具，不通过公网 NodePort 或 LoadBalancer 直接暴露。
 
+## 本地集成闸门（上 EKS 前必须全绿）
+
+策略中心合并后，用下面这一串顺序验证整条链路。全部通过才具备部署条件。
+
+**0. 起完整栈**
+
+```bash
+docker compose up --build -d && docker compose ps
+```
+
+预期 `redis`、`mock-a`、`mock-b`、`gateway`、`automation`、`automation-worker`、
+`web`、`prometheus`、`grafana` 全部健康。
+
+**1. 后端测试（必须在 Python 3.12 容器里跑，宿主机是 3.14）**
+
+Worker 测试需要真实 Redis（`AUTOMATION_TEST_REDIS_URL`，用 db 15）；Gateway 套件
+也需要 Redis，否则若干缓存用例会**静默跳过**而不是失败——只看 `0 failed` 会误判，
+要同时确认 skip 数为 0。
+
+```bash
+python -m pytest automation/tests -q     # 预期 152 passed
+python -m pytest tests -q                # 在 gateway/ 下，预期 86 passed / 0 skipped
+```
+
+**2. Web 测试**
+
+```bash
+cd web && npm test && npm run lint && npm run build && cd ..
+```
+
+⚠️ **需要 Node 22。** 在 Node 25 上 57 个测试会全部失败，报
+`TypeError: localStorage.clear is not a function`——Node 内置的实验性
+`localStorage` 会顶掉 jsdom 的那个。这不是代码回归：同一份代码在 Node 22 下
+57 passed / lint 0 / build 0。仓库目前没有 `engines` 或 `.nvmrc` 来固定版本。
+
+**3. 契约与部署回归**
+
+```bash
+python3 scripts/tests/test-automation-contracts.py
+python3 scripts/tests/test-policy-contracts.py      # 需要 pip install jsonschema
+bash scripts/tests/test-deployment-automation.sh
+bash scripts/tests/test-deployment-policy.sh
+./scripts/kubernetes-monitoring-preflight.sh        # 12 项
+```
+
+**4. 行为冒烟**
+
+```bash
+./scripts/web-smoke-test.sh
+./scripts/kubernetes-automation-smoke-test.sh
+POLICY_ADMIN_KEY=local-policy-admin-development \
+  PROMETHEUS_URL=http://localhost:9090 \
+  ./scripts/kubernetes-policy-smoke-test.sh
+./scripts/automation-peak-test.sh
+```
+
+`automation-peak-test.sh` 提交顺序刻意与优先级相反（low 先提交），所以看到
+critical 最先被执行才说明调度按 `effective_priority` 生效，而不是碰巧。
+
+**5. 安全不变量**
+
+| 不变量 | 怎么验 |
+|---|---|
+| Policy Editor 不经 Web Nginx 暴露 | `curl :8080/admin/policies` 返回的必须是 Chat 的 SPA 兜底页，不是编辑器——**只看状态码会得到假阳性**，200 是 SPA 兜底 |
+| admin key 不进日志 | `docker compose logs \| grep -F "<key>"` 无命中 |
+| `privacy=high` 不落到 real-a | 发一个 `privacy=high` 请求，看 `polygate.provider` |
+| finance privacy 不可降级 | 改 `finance_summary.defaults.privacy` 后 validate/publish 均应 422 |
+| `/internal/routing/simulate` 不外露 | 不在 Gateway OpenAPI 中；**经 `:8080/api/` 也必须不可达**（见下） |
+| 已存在的 ConfigMap 不被覆盖 | `test-deployment-policy.sh` 已用 fake deploy 断言 |
+
+**本地 Compose 的一个预期差异**：Automation API 用的是内存仓库
+（`POLICY_ALLOW_ENV_ADMIN_KEY=true`），所以 publish/rollback **不写回**
+`policy-store.json`，重启容器即回到初始版本。本地冒烟验的是 API 语义与热更新，
+ConfigMap 持久化只能在 EKS 上验证。
+
 ## 详细文档
 
 - [Automation Service](./automation/README.md)

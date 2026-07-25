@@ -65,6 +65,25 @@ else
   bad "Automation preview failed: $PREVIEW"
 fi
 
+# Preview must be stamped with the policy version it was compiled against, as an
+# integer >= 1 (not a string, not null) — Task 10 Step 2.
+PREVIEW_POLICY_VERSION="$(
+  printf '%s' "$PREVIEW" | python3 -c '
+import json
+import sys
+
+value = json.load(sys.stdin).get("policy_version")
+if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+    raise SystemExit(1)
+print(value)
+' 2>/dev/null || true
+)"
+if [ -n "$PREVIEW_POLICY_VERSION" ]; then
+  ok "Preview carries an integer policy_version (v$PREVIEW_POLICY_VERSION)"
+else
+  bad "Preview policy_version is missing or not a positive integer: $PREVIEW"
+fi
+
 IDEMPOTENCY_KEY="k8s-automation-smoke-$(date +%s)-$$"
 SUBMISSION="{\"preview_id\":\"$PREVIEW_ID\",\"confirmed\":true}"
 JOB_ONE="$(
@@ -93,6 +112,28 @@ else
   bad "Idempotent submission failed: first=$JOB_ONE second=$JOB_TWO"
 fi
 
+SUBMITTED_POLICY_VERSION="$(
+  printf '%s' "$JOB_ONE" | python3 -c '
+import json
+import sys
+
+value = json.load(sys.stdin).get("policy_version")
+if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+    raise SystemExit(1)
+print(value)
+' 2>/dev/null || true
+)"
+if [ -n "$SUBMITTED_POLICY_VERSION" ] \
+  && [ "$SUBMITTED_POLICY_VERSION" = "$PREVIEW_POLICY_VERSION" ]; then
+  ok "Queued Job inherits the preview's policy_version (v$SUBMITTED_POLICY_VERSION)"
+else
+  bad "Job policy_version ($SUBMITTED_POLICY_VERSION) does not match preview ($PREVIEW_POLICY_VERSION)"
+fi
+
+# An unrelated read of the active policy while the job is in flight must not
+# change the version already stamped on that job — Task 10 Step 2.
+curl -fsS --max-time 5 "$AUTOMATION_URL/v1/policies/active" >/dev/null 2>&1 || true
+
 status=""
 job_body=""
 deadline=$((SECONDS + TIMEOUT_SECONDS))
@@ -113,6 +154,16 @@ if [ "$status" = "completed" ]; then
   ok "Worker completed the queued request through Gateway"
 else
   bad "Job did not complete successfully (status=$status): $job_body"
+fi
+
+COMPLETED_POLICY_VERSION="$(
+  printf '%s' "$job_body" | jget "['policy_version']" 2>/dev/null || true
+)"
+if [ "$COMPLETED_POLICY_VERSION" = "$SUBMITTED_POLICY_VERSION" ] \
+  && [ -n "$SUBMITTED_POLICY_VERSION" ]; then
+  ok "Completed Job retains its submission policy_version (v$COMPLETED_POLICY_VERSION)"
+else
+  bad "Completed Job policy_version drifted: submitted=$SUBMITTED_POLICY_VERSION completed=$COMPLETED_POLICY_VERSION"
 fi
 
 METRICS="$(
