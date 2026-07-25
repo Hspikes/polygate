@@ -38,11 +38,14 @@ def cache_key(
     quality: str = "",
     max_cost_usd: float = 0.0,
     latency_target_ms: int = 0,
+    policy_version: int = 1,
 ) -> str:
     """
     scope: 区分"自动路由"和"强制指定某个 provider"的缓存空间。
     quality / max_cost_usd / latency_target_ms: 自动路由时这些约束会影响 select_provider 的结果，
         必须纳入 key，否则改约束但 messages 没变时会被缓存短路。
+    policy_version: Task 6 — active policy 的版本号。策略发布后路由结果可能变化，
+        必须纳入 key，v4 缓存不能被 v5 请求命中；rollback 产生新版本号也不会错误复用旧缓存。
     """
     payload = (
         json.dumps(normalize(messages), ensure_ascii=False)
@@ -51,6 +54,7 @@ def cache_key(
         + "|" + quality
         + "|" + str(max_cost_usd)
         + "|" + str(latency_target_ms)
+        + "|" + str(policy_version)
     )
     return "pg:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 

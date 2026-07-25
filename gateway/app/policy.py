@@ -1,5 +1,5 @@
 """
-Task 5: Gateway-side Policy runtime.
+Task 5/6: Gateway-side Policy runtime.
 
 Loads the mounted policy-store.json at startup (Last Known Good baseline),
 then polls the Policy API's GET /v1/policies/active every
@@ -9,9 +9,14 @@ non-200/304, or an invalid policy body) leaves the current snapshot
 untouched — Last Known Good.
 
 Confirmed with C: mounted file path env var is POLICY_FILE (default
-/config/policy-store.json; the ConfigMap is mounted as a directory without
+/config/policy-store.json, ConfigMap mounted as a directory without
 subPath so Kubernetes updates propagate). Policy API base URL env var is
 POLICY_API_URL=http://automation:8020, confirmed unchanged.
+
+Task 6: every load attempt (initial mount + each refresh) reports
+polygate_policy_loaded_version{component="gateway"} on success, or
+polygate_policy_reload_failures_total{component="gateway",reason=...} on
+failure. reason is one of network|http|validation|file per contracts/README.md.
 """
 from __future__ import annotations
 
@@ -25,7 +30,11 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.metrics import record_policy_loaded_version, record_policy_reload_failure
+
 log = logging.getLogger("polygate.gateway.policy")
+
+_COMPONENT = "gateway"  # Task 6: fixed component label per contracts/README.md
 
 DEFAULT_REFRESH_SECONDS = 5
 DEFAULT_STORE_PATH = "/config/policy-store.json"
@@ -96,13 +105,22 @@ class GatewayPolicyRuntime:
                 v for v in store["versions"] if v["version"] == active_version
             )
             gateway_policy = _extract_gateway_policy_from_store_version(version_record)
-            return GatewayPolicySnapshot(version=active_version, gateway=gateway_policy)
+            snapshot = GatewayPolicySnapshot(version=active_version, gateway=gateway_policy)
+            record_policy_loaded_version(_COMPONENT, snapshot.version)  # Task 6
+            return snapshot
         except FileNotFoundError:
             log.warning(
                 '{"event":"policy_store_not_mounted","fallback":"safe_v1_defaults"}'
             )
-            return GatewayPolicySnapshot(version=1, gateway=DEFAULT_GATEWAY_POLICY)
-        except (KeyError, StopIteration, json.JSONDecodeError, ValidationError) as exc:
+            record_policy_reload_failure(_COMPONENT, "file")  # Task 6
+            fallback = GatewayPolicySnapshot(version=1, gateway=DEFAULT_GATEWAY_POLICY)
+            record_policy_loaded_version(_COMPONENT, fallback.version)  # Task 6
+            return fallback
+        except json.JSONDecodeError as exc:
+            record_policy_reload_failure(_COMPONENT, "file")  # Task 6
+            raise PolicyLoadError(f"mounted policy-store.json is invalid JSON: {exc}") from exc
+        except (KeyError, StopIteration, ValidationError) as exc:
+            record_policy_reload_failure(_COMPONENT, "validation")  # Task 6
             raise PolicyLoadError(f"mounted policy-store.json is invalid: {exc}") from exc
 
     def snapshot(self) -> GatewayPolicySnapshot:
@@ -119,6 +137,7 @@ class GatewayPolicyRuntime:
             )
         except httpx.TransportError as exc:
             log.warning(f'{{"event":"policy_refresh_transport_error","err":"{exc}"}}')
+            record_policy_reload_failure(_COMPONENT, "network")  # Task 6
             return
 
         if response.status_code == 304:
@@ -128,6 +147,7 @@ class GatewayPolicyRuntime:
             log.warning(
                 f'{{"event":"policy_refresh_unexpected_status","status":{response.status_code}}}'
             )
+            record_policy_reload_failure(_COMPONENT, "http")  # Task 6
             return
 
         try:
@@ -136,11 +156,13 @@ class GatewayPolicyRuntime:
             new_snapshot = GatewayPolicySnapshot(version=body["version"], gateway=gateway_policy)
         except (KeyError, ValidationError, ValueError) as exc:
             log.warning(f'{{"event":"policy_refresh_invalid_body","err":"{exc}"}}')
+            record_policy_reload_failure(_COMPONENT, "validation")  # Task 6
             return
 
         with self._lock:
             self._snapshot = new_snapshot
         self._etag = response.headers.get("ETag", self._etag)
+        record_policy_loaded_version(_COMPONENT, new_snapshot.version)  # Task 6
         log.info(f'{{"event":"policy_reloaded","version":{new_snapshot.version}}}')
 
     def close(self) -> None:
