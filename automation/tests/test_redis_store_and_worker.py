@@ -101,6 +101,22 @@ class IdempotencyTest(RedisStoreTestBase):
         self.assertNotEqual(first.job_id, second.job_id)
         self.assertEqual(self.store.queue_depth(), 2)
 
+    def test_policy_version_survives_idempotency_and_worker_state_transitions(self):
+        preview = _make_preview("preview_policy_version", "normal", 50)
+        preview.policy_version = 7
+
+        first = self.store.enqueue(preview, idempotency_key="policy-version-key")
+        repeated = self.store.enqueue(preview, idempotency_key="policy-version-key")
+        self.assertEqual(first.policy_version, 7)
+        self.assertEqual(repeated.policy_version, 7)
+
+        running = self.store.claim_next_job(lease_seconds=60)
+        self.assertEqual(running.policy_version, 7)
+
+        self.store.complete_job(running.job_id, {"answer": "done"})
+        completed = self.store.get_job(running.job_id)
+        self.assertEqual(completed.policy_version, 7)
+
 
 class PriorityOrderingTest(RedisStoreTestBase):
     def test_higher_score_claimed_first(self):
