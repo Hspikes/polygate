@@ -2,111 +2,35 @@
 Policy 控制平面的数据结构（Pydantic 模型）。
 
 对应两份契约 schema：
-- contracts/policy.schema.json        -> PolicyDraft 及其嵌套结构（管理员可编辑的策略）
-- contracts/policy-store.schema.json  -> PolicyStoreDocument（存进 ConfigMap 的完整存档）
+- contracts/policy.schema.json        -> PolicyDraft 及其嵌套结构
+- contracts/policy-store.schema.json  -> PolicyStoreDocument
 
-设计原则（和契约保持一致）：
-- 管理员只能编辑"路由 + 调度参数"，碰不到安全护栏（隐私锁定、认证要求等
-  是服务器固定的，故意不放进 PolicyDraft）。
-- 有两条跨字段约束，draft-07 的 JSON schema 表达不了，靠这里的 Pydantic
-  validator 来强制：
-    1. urgency_scores 必须满足 critical > high > normal > low
-    2. 财务场景（finance_summary）的 privacy 必须锁死为 "high"
+跨字段约束（JSON schema draft-07 表达不了，靠 Pydantic validator 强制）：
+1. urgency_scores 必须 critical > high > normal > low
+2. finance_summary 场景的 defaults.privacy 必须锁死 "high"
+3. scenarios 必须恰好包含四个必需场景（用固定字段模型保证，不用 dict）
+4. PolicyStoreDocument：version 唯一、active_version 指向唯一 active 版本
+   且为最大版本号、created_at 必须带时区
 
-字段边界备注（B 负责的 Worker 只消费其中一部分）：
-- Worker 调度真正读取：urgency_scores、scenarios.*.weight、queue.*
-- scenarios.*.defaults 归 A 的 preview 编译器消费，不是 Worker 调度用的
-- gateway.* 整块归 A，Worker 不读；但这里仍完整定义，以便整份 PolicyDraft
-  能被正确解析/校验。
+字段边界：Worker 调度只消费 urgency_scores + scenarios.*.weight + queue；
+scenarios.*.defaults 归 preview 编译器；gateway.* 归 Gateway。
 """
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
-
-class StrictModel(BaseModel):
-    """与 automation/app/models.py 里的 StrictModel 保持一致：禁止多余字段。
-    （这里单独定义一份，避免 policy_models 反向依赖 models；如果团队希望
-    统一，也可以改成 from automation.app.models import StrictModel。）"""
-    model_config = ConfigDict(extra="forbid")
+from automation.app.models import Preferences, StrictModel
 
 
 # ----------------------------------------------------------------------------
-# PolicyDraft 部分（对应 policy.schema.json）
+# PolicyDraft 部分（policy.schema.json）
 # ----------------------------------------------------------------------------
-
-class Defaults(StrictModel):
-    """场景的默认路由偏好。注意：这块是 A 的 preview 编译器消费的，
-    不是 Worker 调度用的。"""
-    quality: Literal["balanced", "high", "cheap"]
-    privacy: Literal["standard", "high"]
-    max_cost_usd: float = Field(ge=0, le=10)
-    latency_target_ms: int = Field(ge=1, le=120000)
-
-
-class Scenario(StrictModel):
-    """一个业务场景的配置：权重 + 默认偏好。
-    Worker 调度只用 weight（场景权重，加到优先级分数里）。"""
-    weight: int = Field(ge=0, le=500)
-    defaults: Defaults
-
-
-class UrgencyScores(StrictModel):
-    """四档紧急程度对应的基础分。Worker 调度直接消费这块。
-    约束 critical > high > normal > low 由下面的 validator 强制。"""
-    critical: int = Field(ge=0, le=1000)
-    high: int = Field(ge=0, le=1000)
-    normal: int = Field(ge=0, le=1000)
-    low: int = Field(ge=0, le=1000)
-
-    @model_validator(mode="after")
-    def _check_strict_ordering(self) -> "UrgencyScores":
-        # draft-07 表达不了的跨字段约束，在这里强制：严格递减
-        if not (self.critical > self.high > self.normal > self.low):
-            raise ValueError(
-                "urgency_scores 必须满足 critical > high > normal > low，"
-                f"当前值为 critical={self.critical}, high={self.high}, "
-                f"normal={self.normal}, low={self.low}"
-            )
-        return self
-
-
-class QueueParams(StrictModel):
-    """队列调度参数。Worker 调度直接消费这块——热更新时读的就是这些值。"""
-    waiting_bonus_interval_seconds: int = Field(ge=1, le=3600)
-    waiting_bonus_points: int = Field(ge=0, le=100)
-    waiting_bonus_cap: int = Field(ge=0, le=1000)
-    starvation_streak_threshold: int = Field(ge=1, le=100)
-    starvation_wait_seconds: int = Field(ge=1, le=86400)
-
-
-class AutomationPolicy(StrictModel):
-    """automation 策略：紧急分数 + 各场景配置 + 队列参数。这是 B 的核心领域。"""
-    urgency_scores: UrgencyScores
-    scenarios: dict[
-        Literal["production_incident", "customer_escalation", "finance_summary", "marketing_batch"],
-        Scenario,
-    ]
-    queue: QueueParams
-
-    @model_validator(mode="after")
-    def _check_finance_privacy_locked(self) -> "AutomationPolicy":
-        # 财务场景的 privacy 必须锁死为 "high"（数据合规要求，schema 里用
-        # scenario_finance 单独约束，这里用代码强制）
-        finance = self.scenarios.get("finance_summary")
-        if finance is not None and finance.defaults.privacy != "high":
-            raise ValueError(
-                "finance_summary 场景的 defaults.privacy 必须为 'high'（财务数据合规要求）"
-            )
-        return self
-
 
 class GatewayPolicy(StrictModel):
-    """gateway 策略——整块归 A 消费，Worker 不读。这里完整定义只是为了能
-    解析/校验整份 PolicyDraft。"""
+    """gateway 策略——归 A 消费，Worker 不读。完整定义以便解析整份 draft。"""
     assumed_output_tokens: int = Field(ge=1, le=32768)
     balanced_price_tolerance: float = Field(ge=0, le=2)
     budget_mode: Literal["soft", "hard"]
@@ -114,70 +38,131 @@ class GatewayPolicy(StrictModel):
     high_quality_strategy: Literal["prefer_real", "lowest_cost"]
 
 
+class UrgencyScores(StrictModel):
+    """四档紧急程度基础分。约束 critical > high > normal > low。"""
+    critical: int = Field(ge=0, le=1000)
+    high: int = Field(ge=0, le=1000)
+    normal: int = Field(ge=0, le=1000)
+    low: int = Field(ge=0, le=1000)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "UrgencyScores":
+        if not (self.critical > self.high > self.normal > self.low):
+            raise ValueError(
+                "urgency scores must satisfy critical > high > normal > low"
+            )
+        return self
+
+
+class QueuePolicy(StrictModel):
+    """队列调度参数。Worker 热更新时读的就是这些。"""
+    waiting_bonus_interval_seconds: int = Field(ge=1, le=3600)
+    waiting_bonus_points: int = Field(ge=0, le=100)
+    waiting_bonus_cap: int = Field(ge=0, le=1000)
+    starvation_streak_threshold: int = Field(ge=1, le=100)
+    starvation_wait_seconds: int = Field(ge=1, le=86400)
+
+
+class ScenarioPolicy(StrictModel):
+    """单个场景配置：权重 + 默认偏好。Worker 只用 weight。
+    defaults 复用现有 Preferences 模型。"""
+    weight: int = Field(ge=0, le=500)
+    defaults: Preferences
+
+
+class Scenarios(StrictModel):
+    """四个必需场景——用固定字段模型（不是 dict），这样少任何一个都会报错。
+    修复：dict[Literal, ...] 只能拒绝未知键，无法保证四个都存在。"""
+    production_incident: ScenarioPolicy
+    customer_escalation: ScenarioPolicy
+    finance_summary: ScenarioPolicy
+    marketing_batch: ScenarioPolicy
+
+
+class AutomationPolicy(StrictModel):
+    """automation 策略：紧急分数 + 场景配置 + 队列参数。B 的核心领域。"""
+    urgency_scores: UrgencyScores
+    scenarios: Scenarios
+    queue: QueuePolicy
+
+    @model_validator(mode="after")
+    def _finance_privacy_locked(self) -> "AutomationPolicy":
+        if self.scenarios.finance_summary.defaults.privacy != "high":
+            raise ValueError(
+                "finance_summary scenario defaults.privacy must be 'high'"
+            )
+        return self
+
+
 class PolicyDraft(StrictModel):
-    """管理员可编辑的完整策略草稿（validate / preview / publish 的输入内容）。"""
+    """管理员可编辑的完整策略草稿。"""
     schema_version: Literal[1]
     gateway: GatewayPolicy
     automation: AutomationPolicy
 
 
 # ----------------------------------------------------------------------------
-# PolicyStore 部分（对应 policy-store.schema.json）
+# PolicyStore 部分（policy-store.schema.json）
 # ----------------------------------------------------------------------------
 
-class VersionRecord(StrictModel):
-    """一个版本记录：版本号 + 状态 + 审计信息 + 完整策略内容。"""
+class PolicyVersion(StrictModel):
+    """一个版本记录：版本号 + 状态 + 审计信息 + 完整策略。"""
     version: int = Field(ge=1)
     status: Literal["active", "archived"]
     created_at: datetime
     created_by: str = Field(min_length=1)
-    change_note: str = Field(min_length=1)
-    # 如果是回滚产生的，记录从哪个版本复制内容；否则 None
-    rollback_from: int | None = Field(default=None, ge=1)
+    change_note: str = Field(min_length=1, max_length=500)
+    # 修复：schema 里 rollback_from 是 required（值可为 null），不能给 default，
+    # 否则"缺字段"也会被接受。去掉 default，强制显式提供（int 或 None）。
+    rollback_from: int | None
     policy: PolicyDraft
 
-
-class PolicyStoreDocument(StrictModel):
-    """存进 polygate-routing-policy ConfigMap 的完整文档：
-    当前生效版本指针 + 最近最多 20 个版本记录。"""
-    active_version: int = Field(ge=1)
-    versions: list[VersionRecord] = Field(min_length=1, max_length=20)
+    @model_validator(mode="after")
+    def _check_rollback_from(self) -> "PolicyVersion":
+        if self.rollback_from is not None and self.rollback_from < 1:
+            raise ValueError("rollback_from must be >= 1 or null")
+        return self
 
     @model_validator(mode="after")
-    def _check_active_pointer(self) -> "PolicyStoreDocument":
-        # active_version 必须恰好对应一个 status=active 的版本记录
-        active_records = [v for v in self.versions if v.status == "active"]
-        if len(active_records) != 1:
-            raise ValueError(
-                f"必须恰好有一个 status='active' 的版本，当前有 {len(active_records)} 个"
-            )
-        if active_records[0].version != self.active_version:
-            raise ValueError(
-                f"active_version={self.active_version} 与唯一 active 记录的 "
-                f"version={active_records[0].version} 不一致"
-            )
+    def _created_at_has_tz(self) -> "PolicyVersion":
+        if self.created_at.tzinfo is None:
+            raise ValueError("created_at must be timezone-aware")
         return self
 
 
-# ----------------------------------------------------------------------------
-# ActivePolicyResponse（GET /v1/policies/active 的响应；对应 policy-examples.json）
-# ----------------------------------------------------------------------------
-
 class ActivePolicyResponse(StrictModel):
-    """GET /v1/policies/active 返回给消费方（Gateway / Worker）的内容。
-    只暴露"当前生效的策略是什么"，不暴露历史版本。"""
+    """GET /v1/policies/active 的响应——只暴露当前生效策略。"""
     version: int = Field(ge=1)
     schema_version: Literal[1]
     published_at: datetime
     policy: PolicyDraft
 
-    @classmethod
-    def from_store(cls, store: PolicyStoreDocument) -> "ActivePolicyResponse":
-        """从完整存档里，抽出当前 active 的那一版，组装成对外响应。"""
-        active = next(v for v in store.versions if v.version == store.active_version)
-        return cls(
-            version=active.version,
-            schema_version=active.policy.schema_version,
-            published_at=active.created_at,
-            policy=active.policy,
-        )
+
+class PolicyStoreDocument(StrictModel):
+    """存进 ConfigMap 的完整文档：active 指针 + 最近最多 20 个版本。"""
+    active_version: int = Field(ge=1)
+    versions: list[PolicyVersion] = Field(min_length=1, max_length=20)
+
+    @property
+    def active(self) -> PolicyVersion:
+        matches = [v for v in self.versions if v.version == self.active_version]
+        if len(matches) != 1:
+            raise ValueError("active_version must reference exactly one version")
+        return matches[0]
+
+    @model_validator(mode="after")
+    def _integrity(self) -> "PolicyStoreDocument":
+        nums = [v.version for v in self.versions]
+        # version 唯一
+        if len(nums) != len(set(nums)):
+            raise ValueError("version numbers must be unique")
+        # active_version 必须指向恰好一个 status=active 的记录
+        actives = [v for v in self.versions if v.status == "active"]
+        if len(actives) != 1:
+            raise ValueError("exactly one version must have status='active'")
+        if actives[0].version != self.active_version:
+            raise ValueError("active_version must match the active record's version")
+        # active_version 必须是最大版本号
+        if self.active_version != max(nums):
+            raise ValueError("active_version must be the highest version number")
+        return self
