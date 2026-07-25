@@ -31,10 +31,21 @@ require_command docker
 require_command kubectl
 require_command python3
 
+if ! python3 -c 'import yaml' >/dev/null 2>&1; then
+  echo "Missing preflight Python dependencies." >&2
+  echo \
+    "Install them with: python3 -m pip install -r scripts/requirements-preflight.txt" \
+    >&2
+  exit 1
+fi
+
 echo "PolyGate Kubernetes monitoring preflight"
 
 bash "$ROOT_DIR/scripts/tests/test-deployment-secrets.sh"
 ok "Application deployment validates required Secret keys before mutation"
+
+bash "$ROOT_DIR/scripts/tests/test-deployment-policy-offline.sh"
+ok "Policy deployment preserves history and least privilege"
 
 kubectl kustomize "$MANIFEST_DIR" >/dev/null
 ok "Kustomize renders the monitoring resources without a cluster"
@@ -45,6 +56,7 @@ for manifest in \
   "$ROOT_DIR/deploy/gateway.yaml" \
   "$ROOT_DIR/deploy/web.yaml" \
   "$ROOT_DIR/deploy/automation.yaml" \
+  "$ROOT_DIR/deploy/policy-rbac.yaml" \
   "$ROOT_DIR/deploy/hpa.yaml"; do
   docker run --rm --interactive "$KUBECONFORM_IMAGE" \
     -strict \
