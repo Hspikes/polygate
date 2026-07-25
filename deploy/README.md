@@ -171,11 +171,27 @@ Automation 的本地 `8020` 端口只绑定 `127.0.0.1`，不会监听局域网�
 
 ## 部署顺序（第 4 天集成）
 
+**先跑本地集成闸门再上云。** 完整顺序见根
+[README](../README.md#本地集成闸门上-eks-前必须全绿)：后端与 Web 测试、契约与
+部署回归、四个行为冒烟、六条安全不变量。闸门没全绿就部署，等于把本地能查出来的
+问题带到只有 C 能操作的环境里排查。
+
 使用和构建、推送时完全相同的标签：
 
 ```bash
 IMAGE_TAG=<刚才输出的提交号> ./scripts/deploy-kubernetes-application.sh
 ./scripts/deploy-kubernetes-monitoring.sh
+```
+
+部署后用同一批脚本对着 port-forward 再验一遍（这次是真 ConfigMap 持久化，
+本地内存仓库验不到）：
+
+```bash
+kubectl port-forward deployment/automation 8020:8020 &
+kubectl port-forward deployment/prometheus 9090:9090 &
+POLICY_ADMIN_KEY=<key> ./scripts/kubernetes-policy-smoke-test.sh
+INCLUDE_AUTOMATION=1 INCLUDE_POLICY=1 GRAFANA_PASSWORD=<pw> \
+  ./scripts/kubernetes-monitoring-smoke-test.sh
 ```
 
 ## 关键提醒（踩过的坑）

@@ -54,6 +54,29 @@ still be entered manually in the page. Compose uses an in-memory Policy
 Repository, so published history returns to the mounted baseline after the
 Automation container restarts.
 
+## Integration gate
+
+The full cross-lane sequence that must pass before an EKS deploy lives in the
+root [README](../README.md#本地集成闸门上-eks-前必须全绿). The Automation-specific
+parts of it:
+
+```bash
+# 152 passed. Needs a real Redis on db 15 (Worker tests) and Python 3.12.
+AUTOMATION_TEST_REDIS_URL=redis://127.0.0.1:6379/15 python -m pytest automation/tests -q
+
+# Preview/Job policy_version stamping, idempotency, Worker completion, metrics.
+./scripts/kubernetes-automation-smoke-test.sh
+
+# Priority scheduling: submitted low -> critical, must execute critical -> low.
+./scripts/automation-peak-test.sh
+```
+
+`automation-peak-test.sh` submits four intents in reverse priority order and then
+prints the order they were actually claimed in, sorted by `started_at`. Seeing
+`critical` first is the evidence that `effective_priority` scheduling works; the
+same run also asserts every job keeps one consistent `policy_version` from
+preview through completion.
+
 ## Policy Editor verification
 
 Build the exact image and run the Automation suite in Python 3.12:
