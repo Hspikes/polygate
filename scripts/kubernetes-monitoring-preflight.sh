@@ -120,6 +120,28 @@ panel_ids = [panel.get("id") for panel in panels]
 if len(panel_ids) != len(set(panel_ids)):
     raise SystemExit("dashboard contains duplicate panel IDs")
 
+panel_titles = [panel.get("title") for panel in panels if panel.get("title")]
+duplicate_titles = sorted(
+    {title for title in panel_titles if panel_titles.count(title) > 1}
+)
+if duplicate_titles:
+    raise SystemExit(f"dashboard contains duplicate panel titles: {duplicate_titles}")
+
+# Task 9：Policy Management 区域的面板标题被计划固定，Grafana 截图与演示脚本
+# 都按标题定位，不得随实现改名。
+required_panel_titles = {
+    "Active Policy Version",
+    "Gateway Loaded Policy",
+    "Worker Loaded Policy",
+    "Policy Publication Outcomes",
+    "Policy Reload Failures",
+    "Last Policy Publication",
+    "Open Policy Editor",
+}
+missing_titles = required_panel_titles - set(panel_titles)
+if missing_titles:
+    raise SystemExit(f"dashboard is missing policy panels: {sorted(missing_titles)}")
+
 expressions = [
     target["expr"]
     for panel in panels
@@ -138,6 +160,12 @@ required_metrics = {
     "container_memory_working_set_bytes",
     "kube_deployment_status_replicas_available",
     "kube_horizontalpodautoscaler_status_desired_replicas",
+    # Task 9：指标名由 contracts/README.md 冻结，Grafana 与告警共同依赖。
+    "polygate_policy_active_version",
+    "polygate_policy_last_publish_timestamp_seconds",
+    "polygate_policy_loaded_version",
+    "polygate_policy_publications_total",
+    "polygate_policy_reload_failures_total",
 }
 missing = {
     metric
