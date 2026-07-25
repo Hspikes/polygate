@@ -78,3 +78,74 @@ def test_reject_duplicate_versions():
     bad["versions"].append(dup)  # 重复 version 号
     with pytest.raises(ValidationError):
         PolicyStoreDocument.model_validate(bad)
+
+
+def _replace_path(payload: dict, path: tuple[str | int, ...], value) -> None:
+    target = payload
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = value
+
+
+POLICY_NUMERIC_PATHS = [
+    ("gateway", "assumed_output_tokens"),
+    ("gateway", "balanced_price_tolerance"),
+    ("automation", "urgency_scores", "critical"),
+    ("automation", "urgency_scores", "high"),
+    ("automation", "urgency_scores", "normal"),
+    ("automation", "urgency_scores", "low"),
+    ("automation", "queue", "waiting_bonus_interval_seconds"),
+    ("automation", "queue", "waiting_bonus_points"),
+    ("automation", "queue", "waiting_bonus_cap"),
+    ("automation", "queue", "starvation_streak_threshold"),
+    ("automation", "queue", "starvation_wait_seconds"),
+    *[
+        ("automation", "scenarios", scenario, field)
+        for scenario in (
+            "production_incident",
+            "customer_escalation",
+            "finance_summary",
+            "marketing_batch",
+        )
+        for field in ("weight",)
+    ],
+    *[
+        ("automation", "scenarios", scenario, "defaults", field)
+        for scenario in (
+            "production_incident",
+            "customer_escalation",
+            "finance_summary",
+            "marketing_batch",
+        )
+        for field in ("max_cost_usd", "latency_target_ms")
+    ],
+]
+
+
+@pytest.mark.parametrize("path", POLICY_NUMERIC_PATHS, ids=lambda path: ".".join(path))
+def test_reject_numeric_strings_in_policy_draft(path):
+    bad = copy.deepcopy(EXAMPLES["draft"])
+    target = bad
+    for part in path:
+        target = target[part]
+    _replace_path(bad, path, str(target))
+
+    with pytest.raises(ValidationError):
+        PolicyDraft.model_validate(bad)
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("active_version",), "4"),
+        (("versions", 0, "version"), "4"),
+        (("versions", 0, "rollback_from"), "1"),
+    ],
+    ids=("active_version", "version", "rollback_from"),
+)
+def test_reject_numeric_strings_in_policy_store(path, value):
+    bad = copy.deepcopy(EXAMPLES["store"])
+    _replace_path(bad, path, value)
+
+    with pytest.raises(ValidationError):
+        PolicyStoreDocument.model_validate(bad)

@@ -35,8 +35,8 @@ class Urgency(str, Enum):
 class Preferences(StrictModel):
     quality: Literal["cheap", "balanced", "high"]
     privacy: Literal["standard", "high"]
-    max_cost_usd: float = Field(ge=0, le=10)
-    latency_target_ms: int = Field(ge=1, le=120_000)
+    max_cost_usd: float = Field(ge=0, le=10, strict=True)
+    latency_target_ms: int = Field(ge=1, le=120_000, strict=True)
 
 
 class AutomationIntent(StrictModel):

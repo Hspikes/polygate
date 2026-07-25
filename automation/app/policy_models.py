@@ -31,8 +31,8 @@ from automation.app.models import Preferences, StrictModel
 
 class GatewayPolicy(StrictModel):
     """gateway 策略——归 A 消费，Worker 不读。完整定义以便解析整份 draft。"""
-    assumed_output_tokens: int = Field(ge=1, le=32768)
-    balanced_price_tolerance: float = Field(ge=0, le=2)
+    assumed_output_tokens: int = Field(ge=1, le=32768, strict=True)
+    balanced_price_tolerance: float = Field(ge=0, le=2, strict=True)
     budget_mode: Literal["soft", "hard"]
     latency_mode: Literal["soft", "hard"]
     high_quality_strategy: Literal["prefer_real", "lowest_cost"]
@@ -40,10 +40,10 @@ class GatewayPolicy(StrictModel):
 
 class UrgencyScores(StrictModel):
     """四档紧急程度基础分。约束 critical > high > normal > low。"""
-    critical: int = Field(ge=0, le=1000)
-    high: int = Field(ge=0, le=1000)
-    normal: int = Field(ge=0, le=1000)
-    low: int = Field(ge=0, le=1000)
+    critical: int = Field(ge=0, le=1000, strict=True)
+    high: int = Field(ge=0, le=1000, strict=True)
+    normal: int = Field(ge=0, le=1000, strict=True)
+    low: int = Field(ge=0, le=1000, strict=True)
 
     @model_validator(mode="after")
     def _ordered(self) -> "UrgencyScores":
@@ -56,17 +56,17 @@ class UrgencyScores(StrictModel):
 
 class QueuePolicy(StrictModel):
     """队列调度参数。Worker 热更新时读的就是这些。"""
-    waiting_bonus_interval_seconds: int = Field(ge=1, le=3600)
-    waiting_bonus_points: int = Field(ge=0, le=100)
-    waiting_bonus_cap: int = Field(ge=0, le=1000)
-    starvation_streak_threshold: int = Field(ge=1, le=100)
-    starvation_wait_seconds: int = Field(ge=1, le=86400)
+    waiting_bonus_interval_seconds: int = Field(ge=1, le=3600, strict=True)
+    waiting_bonus_points: int = Field(ge=0, le=100, strict=True)
+    waiting_bonus_cap: int = Field(ge=0, le=1000, strict=True)
+    starvation_streak_threshold: int = Field(ge=1, le=100, strict=True)
+    starvation_wait_seconds: int = Field(ge=1, le=86400, strict=True)
 
 
 class ScenarioPolicy(StrictModel):
     """单个场景配置：权重 + 默认偏好。Worker 只用 weight。
     defaults 复用现有 Preferences 模型。"""
-    weight: int = Field(ge=0, le=500)
+    weight: int = Field(ge=0, le=500, strict=True)
     defaults: Preferences
 
 
@@ -107,14 +107,14 @@ class PolicyDraft(StrictModel):
 
 class PolicyVersion(StrictModel):
     """一个版本记录：版本号 + 状态 + 审计信息 + 完整策略。"""
-    version: int = Field(ge=1)
+    version: int = Field(ge=1, strict=True)
     status: Literal["active", "archived"]
     created_at: datetime
     created_by: str = Field(min_length=1)
     change_note: str = Field(min_length=1, max_length=500)
     # 修复：schema 里 rollback_from 是 required（值可为 null），不能给 default，
     # 否则"缺字段"也会被接受。去掉 default，强制显式提供（int 或 None）。
-    rollback_from: int | None
+    rollback_from: int | None = Field(strict=True)
     policy: PolicyDraft
 
     @model_validator(mode="after")
@@ -132,7 +132,7 @@ class PolicyVersion(StrictModel):
 
 class ActivePolicyResponse(StrictModel):
     """GET /v1/policies/active 的响应——只暴露当前生效策略。"""
-    version: int = Field(ge=1)
+    version: int = Field(ge=1, strict=True)
     schema_version: Literal[1]
     published_at: datetime
     policy: PolicyDraft
@@ -140,7 +140,7 @@ class ActivePolicyResponse(StrictModel):
 
 class PolicyStoreDocument(StrictModel):
     """存进 ConfigMap 的完整文档：active 指针 + 最近最多 20 个版本。"""
-    active_version: int = Field(ge=1)
+    active_version: int = Field(ge=1, strict=True)
     versions: list[PolicyVersion] = Field(min_length=1, max_length=20)
 
     @property

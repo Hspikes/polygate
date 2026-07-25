@@ -23,17 +23,27 @@ import httpx
 
 from automation.app.models import AutomationIntent, GatewaySimulationRequest
 from automation.app.policy_models import (
+    ActivePolicyResponse,
     PolicyDraft,
     PolicyStoreDocument,
     PolicyVersion,
 )
-from automation.app.policy_repository import PolicyConflict, PolicyRepository
+from automation.app.policy_repository import (
+    PolicyConflict,
+    PolicyRepository,
+    PolicyVersionNotFound,
+    RepositoryUnavailable,
+)
 
 MAX_VERSIONS = 20
 
 
 class PolicyConflictError(PolicyConflict):
     """publish/rollback 时 base_version 已过期（不是当前 active 版本）。"""
+
+
+class GatewaySimulationUnavailable(RuntimeError):
+    """Gateway routing simulation failed without exposing upstream details."""
 
 
 @dataclass
@@ -89,10 +99,14 @@ class HttpGatewaySimulator:
                 )
                 response.raise_for_status()
                 result = response.json()
-            except (httpx.HTTPError, ValueError) as exc:
-                raise RuntimeError("gateway policy simulation is unavailable") from exc
+            except (httpx.HTTPError, ValueError):
+                raise GatewaySimulationUnavailable(
+                    "gateway policy simulation is unavailable"
+                ) from None
             if not isinstance(result, dict):
-                raise RuntimeError("gateway policy simulation returned an invalid response")
+                raise GatewaySimulationUnavailable(
+                    "gateway policy simulation returned an invalid response"
+                )
             results.append(result)
         return results
 
@@ -112,12 +126,17 @@ class PolicyManager:
         self._repository = repository
         self._cache = cache or _NullCache()
         snapshot = repository.load()
-        self._active: PolicyVersion = snapshot.document.active
+        self._active: PolicyVersion = snapshot.document.active.model_copy(deep=True)
+        self._ready = True
 
     @property
     def active(self) -> PolicyVersion:
         # 返回一个深拷贝，防止调用方改到内部状态（active policy 对外不可变）
         return self._active.model_copy(deep=True)
+
+    @property
+    def ready(self) -> bool:
+        return self._ready
 
     @property
     def history(self) -> list[PolicyVersion]:
@@ -139,16 +158,25 @@ class PolicyManager:
         self,
         draft: PolicyDraft,
         intents: list[AutomationIntent],
+        *,
+        active_policy: PolicyDraft | None = None,
     ) -> list[PrioritySimulation]:
         """对每个 intent，比较'当前 active 策略'与'新 draft'下的优先级分数。"""
         results: list[PrioritySimulation] = []
-        current = self._active.policy
-        for i, intent in enumerate(intents):
+        current = active_policy or self._active.policy
+        slug_counts: dict[str, int] = {}
+        for intent in intents:
             before = self._score(current, intent)
             after = self._score(draft, intent)
+            slug = (
+                f"{intent.urgency.value}-"
+                f"{intent.scenario.value.replace('_', '-')}"
+            )
+            slug_counts[slug] = slug_counts.get(slug, 0) + 1
+            occurrence = slug_counts[slug]
             results.append(
                 PrioritySimulation(
-                    case_id=f"{intent.urgency.value}-{intent.scenario.value}-{i}",
+                    case_id=slug if occurrence == 1 else f"{slug}-{occurrence}",
                     before_score=before,
                     after_score=after,
                 )
@@ -197,7 +225,7 @@ class PolicyManager:
             None,
         )
         if target is None:
-            raise ValueError(f"target_version {target_version} not found")
+            raise PolicyVersionNotFound("policy version not found")
         # 回滚 = 用目标版本的 policy 内容，生成一个全新版本号
         return self._commit(
             base_version=base_version,
@@ -236,7 +264,7 @@ class PolicyManager:
             created_by=actor,
             change_note=change_note,
             rollback_from=rollback_from,
-            policy=draft,
+            policy=draft.model_copy(deep=True),
         )
 
         # 旧的 active 记录降级为 archived
@@ -265,33 +293,63 @@ class PolicyManager:
 
         # 1) 先写持久状态（compare_and_swap 保证并发安全）
         try:
-            self._repository.compare_and_swap(new_document, snapshot.revision)
+            persisted = self._repository.compare_and_swap(
+                new_document,
+                snapshot.revision,
+            )
         except PolicyConflict as exc:
             # repository 写失败 -> _active 完全不变
             raise PolicyConflictError(str(exc)) from exc
+        except RepositoryUnavailable:
+            try:
+                persisted = self._repository.load()
+            except RepositoryUnavailable:
+                self._ready = False
+                raise RepositoryUnavailable(
+                    "policy repository write outcome could not be reconciled"
+                ) from None
+
+            self._ready = True
+            if persisted.document == new_document:
+                pass
+            elif (
+                persisted.revision == snapshot.revision
+                and persisted.document == document
+            ):
+                raise RepositoryUnavailable(
+                    "policy repository write was not committed"
+                ) from None
+            else:
+                self._activate_and_cache(persisted.document.active)
+                raise PolicyConflictError(
+                    "a different policy state was committed concurrently"
+                ) from None
+
+        self._ready = True
+        durable_record = persisted.document.active
 
         # 2) 写成功后才切换内存 active
-        self._active = new_record
+        warnings = self._activate_and_cache(durable_record)
 
-        # 3) 更新 cache（失败只降级，不回滚 active）
-        warnings: list[str] = []
+        return PublishResult(
+            version=durable_record.version,
+            previous_version=base_version,
+            rollback_from=durable_record.rollback_from,
+            published_at=durable_record.created_at,
+            warnings=warnings,
+        )
+
+    def _activate_and_cache(self, record: PolicyVersion) -> list[str]:
+        self._active = record.model_copy(deep=True)
         try:
-            from automation.app.policy_models import ActivePolicyResponse
             self._cache.set_active(
                 ActivePolicyResponse(
-                    version=new_record.version,
-                    schema_version=new_record.policy.schema_version,
-                    published_at=new_record.created_at,
-                    policy=new_record.policy,
+                    version=record.version,
+                    schema_version=record.policy.schema_version,
+                    published_at=record.created_at,
+                    policy=record.policy.model_copy(deep=True),
                 )
             )
         except Exception:
-            warnings.append("policy cache degraded")
-
-        return PublishResult(
-            version=new_version_num,
-            previous_version=base_version,
-            rollback_from=rollback_from,
-            published_at=now,
-            warnings=warnings,
-        )
+            return ["policy cache degraded"]
+        return []

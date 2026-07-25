@@ -29,6 +29,7 @@ from automation.app.models import (
 from automation.app.kubernetes_policy_repository import KubernetesConfigMapPolicyRepository
 from automation.app.policy_auth import PolicyAdminAuthenticator
 from automation.app.policy_manager import (
+    GatewaySimulationUnavailable,
     GatewaySimulator,
     HttpGatewaySimulator,
     PolicyManager,
@@ -36,7 +37,12 @@ from automation.app.policy_manager import (
 )
 from automation.app.policy_metrics import ACTIVE_VERSION, LAST_PUBLISH, PUBLICATIONS
 from automation.app.policy_models import ActivePolicyResponse, PolicyDraft, PolicyStoreDocument, PolicyVersion
-from automation.app.policy_repository import InMemoryPolicyRepository, PolicyConflict, RepositoryUnavailable
+from automation.app.policy_repository import (
+    InMemoryPolicyRepository,
+    PolicyConflict,
+    PolicyVersionNotFound,
+    RepositoryUnavailable,
+)
 from automation.app.store import AutomationStore, InMemoryAutomationStore
 from automation.app.templates import TEMPLATES
 from automation.app.redis_store import RedisAutomationStore
@@ -97,7 +103,9 @@ def _policy_router(
     gateway_simulator: GatewaySimulator,
 ) -> APIRouter:
     router = APIRouter()
-    ACTIVE_VERSION.set(manager.active.version)
+    startup_active = manager.active
+    ACTIVE_VERSION.set(startup_active.version)
+    LAST_PUBLISH.set(startup_active.created_at.timestamp())
 
     def require_admin(authorization: str | None = Header(default=None)) -> None:
         authenticator.require(authorization)
@@ -137,7 +145,11 @@ def _policy_router(
     @router.post("/v1/admin/policies/preview")
     def preview_policy(request: PolicyPreviewRequest, _: None = Depends(require_admin)) -> dict[str, object]:
         active = manager.active
-        priority = manager.preview_priority(request.policy, request.priority_cases)
+        priority = manager.preview_priority(
+            request.policy,
+            request.priority_cases,
+            active_policy=active.policy,
+        )
         before_routing = gateway_simulator.simulate(active.policy, request.gateway_cases)
         after_routing = gateway_simulator.simulate(request.policy, request.gateway_cases)
         return {
@@ -205,7 +217,7 @@ def _policy_router(
                 change_note=request.change_note,
                 actor="policy-admin",
             )
-        except ValueError as exc:
+        except PolicyVersionNotFound as exc:
             PUBLICATIONS.labels(action="rollback", result="rejected").inc()
             raise HTTPException(status_code=404, detail="policy version not found") from exc
         except PolicyConflict as exc:
@@ -304,6 +316,13 @@ def create_app(
     def policy_conflict(_, __):
         return JSONResponse(status_code=409, content={"detail": "policy version conflict"})
 
+    @app.exception_handler(GatewaySimulationUnavailable)
+    def gateway_simulation_unavailable(_, __):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "gateway simulation unavailable"},
+        )
+
     @app.exception_handler(RequestValidationError)
     def request_validation_error(request: Request, exc: RequestValidationError):
         if request.url.path == "/v1/admin/policies/publish":
@@ -322,6 +341,11 @@ def create_app(
 
     @app.get("/ready")
     def ready() -> dict[str, str]:
+        if policy_manager is not None and not policy_manager.ready:
+            raise HTTPException(
+                status_code=503,
+                detail="policy manager unavailable",
+            )
         redis_client = getattr(persistence, "r", None)
         if redis_client is not None:
             try:
