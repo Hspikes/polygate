@@ -26,17 +26,27 @@ public internet.
 
 ## Local preflight
 
+Create a lightweight local environment once. These are deployment-test
+dependencies only; installing the Gateway runtime is not required:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r scripts/requirements-preflight.txt
+```
+
 Run this before opening an EKS session:
 
 ```bash
 ./scripts/kubernetes-monitoring-preflight.sh
 ```
 
-It does not contact a cluster. It renders the Kustomize resources, validates
-all application and monitoring manifests against Kubernetes schemas, checks
-the in-cluster Prometheus configuration with `promtool`, validates generated
-ConfigMaps, and checks that the dashboard contains the required Kubernetes
-queries.
+It does not contact a cluster. The Policy regression runs with an empty
+kubeconfig and fails if it attempts external `kubectl` discovery. The complete
+preflight renders the Kustomize resources, validates all application and
+monitoring manifests against Kubernetes schemas, checks the in-cluster
+Prometheus configuration with `promtool`, validates generated ConfigMaps, and
+checks that the dashboard contains the required Kubernetes queries.
 
 ## One-time secret
 
