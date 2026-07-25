@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>PolyGate Policy Management</title>
+    <link rel="stylesheet" href="/admin/assets/policy-admin.css">
+    <script defer src="/admin/assets/policy-admin.js"></script>
+    <script defer src="/admin/assets/vendor/alpine-csp.min.js"></script>
+  </head>
+  <body x-data="policyAdminApp">
+    <a class="skip-link" href="#main-content">Skip to policy editor</a>
+
+    <header class="site-header">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <div>
+          <p class="eyebrow">PolyGate control plane</p>
+          <h1>Policy Management</h1>
+        </div>
+      </div>
+      <div class="active-pill" aria-live="polite">
+        <span class="status-dot" :class="activeStatusClass"></span>
+        <span x-text="activeStatusLabel">Loading active policy</span>
+      </div>
+    </header>
+
+    <main id="main-content" class="page-shell">
+      <section class="gate-layout" x-show="!connected">
+        <div class="gate-copy">
+          <p class="eyebrow">Private administration</p>
+          <h2>Shape routing and queue behavior with a guarded release flow.</h2>
+          <p>
+            Review the active Policy v1 configuration, validate every edit, inspect its
+            operational impact, and publish only when both safety gates pass.
+          </p>
+          <div class="flow-strip" aria-label="Required publishing sequence">
+            <span>1 · Edit</span><span>2 · Validate</span><span>3 · Preview</span><span>4 · Publish</span>
+          </div>
+        </div>
+
+        <form class="key-card" @submit.prevent="connect($event)">
+          <div>
+            <p class="eyebrow">Administrator session</p>
+            <h2>Connect to policy history</h2>
+            <p class="muted">Your credential is held in memory for this tab and cleared on refresh.</p>
+          </div>
+          <label for="admin-credential">Administrator key</label>
+          <input
+            id="admin-credential"
+            name="credential"
+            type="password"
+            autocomplete="off"
+            required
+            aria-describedby="key-help"
+          >
+          <p id="key-help" class="field-help">Use the key provided through the existing operations channel.</p>
+          <p class="inline-alert error" x-show="gateError" x-text="gateError" role="alert"></p>
+          <button class="button primary wide" type="submit" :disabled="busyAction !== null">
+            <span x-show="busyAction !== 'connect'">Connect securely</span>
+            <span x-show="busyAction === 'connect'">Connecting…</span>
+          </button>
+        </form>
+      </section>
+
+      <div x-show="connected" x-cloak>
+        <section class="workspace-toolbar" aria-label="Policy workspace controls">
+          <div>
+            <p class="eyebrow">Editing workspace</p>
+            <h2>Active policy v<span x-text="baseVersion">—</span></h2>
+            <p class="muted" x-text="publishedAtLabel"></p>
+          </div>
+          <div class="toolbar-actions">
+            <span class="revision-badge" :class="revisionStatusClass" x-text="revisionStatusLabel"></span>
+            <button class="button secondary" type="button" @click="reloadWorkspace" :disabled="busyAction !== null">
+              Reload latest
+            </button>
+            <button class="button ghost" type="button" @click="disconnect" :disabled="busyAction !== null">
+              Disconnect
+            </button>
+          </div>
+        </section>
+
+        <p
+          class="global-message"
+          :class="messageClass"
+          x-show="message.text"
+          x-text="message.text"
+          role="status"
+          aria-live="polite"
+        ></p>
+
+        <div class="editor-grid">
+          <div class="editor-column">
+            <section class="panel" aria-labelledby="gateway-heading">
+              <div class="panel-heading">
+                <div>
+                  <p class="section-index">01</p>
+                  <h2 id="gateway-heading">Gateway routing</h2>
+                </div>
+                <p>Control cost, latency, and quality trade-offs.</p>
+              </div>
+              <div class="field-grid">
+                <template x-for="field in gatewayFields" :key="field.path">
+                  <div class="field">
+                    <label :for="field.domId" x-text="field.label"></label>
+                    <template x-if="field.kind === 'select'">
+                      <select
+                        :id="field.domId"
+                        @change="writeField(field.path, $event.target.value, field)"
+                      >
+                        <template x-for="option in field.options" :key="option.value">
+                          <option
+                            :value="option.value"
+                            :selected="isSelected(field.path, option.value)"
+                            x-text="option.label"
+                          ></option>
+                        </template>
+                      </select>
+                    </template>
+                    <template x-if="field.kind === 'number'">
+                      <div class="input-with-unit">
+                        <input
+                          :id="field.domId"
+                          type="number"
+                          :min="field.min"
+                          :max="field.max"
+                          :step="field.step"
+                          :value="readField(field.path)"
+                          @input="writeField(field.path, $event.target.value, field)"
+                        >
+                        <span x-show="field.unit" x-text="field.unit"></span>
+                      </div>
+                    </template>
+                    <p class="field-help" x-text="field.help"></p>
+                    <p class="field-error" x-show="fieldError(field.path)" x-text="fieldError(field.path)"></p>
+                  </div>
+                </template>
+              </div>
+            </section>
+
+            <section class="panel" aria-labelledby="urgency-heading">
+              <div class="panel-heading">
+                <div>
+                  <p class="section-index">02</p>
+                  <h2 id="urgency-heading">Urgency scores</h2>
+                </div>
+                <p>Scores must remain strictly descending from critical to low.</p>
+              </div>
+              <div class="field-grid four-up">
+                <template x-for="field in urgencyFields" :key="field.path">
+                  <div class="field compact">
+                    <label :for="field.domId" x-text="field.label"></label>
+                    <input
+                      :id="field.domId"
+                      type="number"
+                      :min="field.min"
+                      :max="field.max"
+                      :step="field.step"
+                      :value="readField(field.path)"
+                      @input="writeField(field.path, $event.target.value, field)"
+                    >
+                    <p class="field-error" x-show="fieldError(field.path)" x-text="fieldError(field.path)"></p>
+                  </div>
+                </template>
+              </div>
+              <p class="inline-alert error" x-show="urgencyOrderError" x-text="urgencyOrderError"></p>
+            </section>
+
+            <section class="panel" aria-labelledby="scenario-heading">
+              <div class="panel-heading">
+                <div>
+                  <p class="section-index">03</p>
+                  <h2 id="scenario-heading">Scenario defaults</h2>
+                </div>
+                <p>Four fixed scenarios define priority weight and request preferences.</p>
+              </div>
+              <div class="scenario-stack">
+                <template x-for="scenario in scenarioGroups" :key="scenario.key">
+                  <fieldset class="scenario-card">
+                    <legend>
+                      <span x-text="scenario.label"></span>
+                      <code x-text="scenario.key"></code>
+                    </legend>
+                    <div class="field-grid scenario-fields">
+                      <template x-for="field in scenario.fields" :key="field.path">
+                        <div class="field compact">
+                          <label :for="field.domId" x-text="field.label"></label>
+                          <template x-if="field.kind === 'select'">
+                            <select
+                              :id="field.domId"
+                              :disabled="field.disabled"
+                              @change="writeField(field.path, $event.target.value, field)"
+                            >
+                              <template x-for="option in field.options" :key="option.value">
+                                <option
+                                  :value="option.value"
+                                  :selected="isSelected(field.path, option.value)"
+                                  x-text="option.label"
+                                ></option>
+                              </template>
+                            </select>
+                          </template>
+                          <template x-if="field.kind === 'number'">
+                            <div class="input-with-unit">
+                              <input
+                                :id="field.domId"
+                                type="number"
+                                :min="field.min"
+                                :max="field.max"
+                                :step="field.step"
+                                :value="readField(field.path)"
+                                @input="writeField(field.path, $event.target.value, field)"
+                              >
+                              <span x-show="field.unit" x-text="field.unit"></span>
+                            </div>
+                          </template>
+                          <p class="field-help" x-show="field.help" x-text="field.help"></p>
+                          <p class="field-error" x-show="fieldError(field.path)" x-text="fieldError(field.path)"></p>
+                        </div>
+                      </template>
+                    </div>
+                  </fieldset>
+                </template>
+              </div>
+              <div class="guardrail-note">
+                <span aria-hidden="true">◆</span>
+                <div>
+                  <strong>Locked guardrail</strong>
+                  <p>Finance summary privacy is fixed at <code>high</code> and cannot be edited.</p>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel" aria-labelledby="queue-heading">
+              <div class="panel-heading">
+                <div>
+                  <p class="section-index">04</p>
+                  <h2 id="queue-heading">Queue policy</h2>
+                </div>
+                <p>Waiting rewards are recalculated for jobs already in the queue.</p>
+              </div>
+              <div class="field-grid">
+                <template x-for="field in queueFields" :key="field.path">
+                  <div class="field">
+                    <label :for="field.domId" x-text="field.label"></label>
+                    <div class="input-with-unit">
+                      <input
+                        :id="field.domId"
+                        type="number"
+                        :min="field.min"
+                        :max="field.max"
+                        :step="field.step"
+                        :value="readField(field.path)"
+                        @input="writeField(field.path, $event.target.value, field)"
+                      >
+                      <span x-show="field.unit" x-text="field.unit"></span>
+                    </div>
+                    <p class="field-help" x-text="field.help"></p>
+                    <p class="field-error" x-show="fieldError(field.path)" x-text="fieldError(field.path)"></p>
+                  </div>
+                </template>
+              </div>
+            </section>
+          </div>
+
+          <aside class="release-column" aria-label="Release workflow">
+            <section class="panel release-panel">
+              <div class="panel-heading stacked">
+                <div>
+                  <p class="section-index">Release</p>
+                  <h2>Safe publish flow</h2>
+                </div>
+                <p>Every draft must pass server validation and impact preview at its current revision.</p>
+              </div>
+
+              <ol class="release-steps">
+                <li :class="validationStepClass">
+                  <span class="step-marker">1</span>
+                  <div><strong>Validate</strong><small x-text="validationStepLabel"></small></div>
+                </li>
+                <li :class="previewStepClass">
+                  <span class="step-marker">2</span>
+                  <div><strong>Preview</strong><small x-text="previewStepLabel"></small></div>
+                </li>
+                <li :class="publishStepClass">
+                  <span class="step-marker">3</span>
+                  <div><strong>Publish</strong><small x-text="publishStepLabel"></small></div>
+                </li>
+              </ol>
+
+              <div class="validation-summary" aria-live="polite">
+                <p class="summary-title">Validation summary</p>
+                <p x-show="validationMessages.length === 0" class="muted">No current validation messages.</p>
+                <ul x-show="validationMessages.length > 0">
+                  <template x-for="entry in validationMessages" :key="entry.key">
+                    <li x-text="entry.text"></li>
+                  </template>
+                </ul>
+              </div>
+
+              <div class="button-row">
+                <button class="button secondary" type="button" @click="validateDraft" :disabled="!canValidate">
+                  <span x-show="busyAction !== 'validate'">Validate</span>
+                  <span x-show="busyAction === 'validate'">Validating…</span>
+                </button>
+                <button class="button secondary" type="button" @click="previewDraft" :disabled="!canPreview">
+                  <span x-show="busyAction !== 'preview'">Preview impact</span>
+                  <span x-show="busyAction === 'preview'">Previewing…</span>
+                </button>
+              </div>
+
+              <label for="change-note">Change note</label>
+              <textarea
+                id="change-note"
+                rows="4"
+                maxlength="500"
+                placeholder="Describe why this policy should change…"
+                :value="changeNote"
+                @input="updateChangeNote($event)"
+              ></textarea>
+              <div class="note-meta">
+                <span x-text="changeNoteCountLabel"></span>
+                <span class="field-error" x-show="changeNoteError" x-text="changeNoteError"></span>
+              </div>
+
+              <button class="button primary wide" type="button" @click="publishDraft" :disabled="!canPublish">
+                <span x-show="busyAction !== 'publish'">Publish policy</span>
+                <span x-show="busyAction === 'publish'">Publishing…</span>
+              </button>
+            </section>
+
+            <template x-if="preview">
+              <section class="panel preview-panel" aria-labelledby="impact-heading">
+                <div class="panel-heading stacked">
+                  <div>
+                    <p class="section-index">Impact preview</p>
+                    <h2 id="impact-heading">Before and after</h2>
+                  </div>
+                  <p>Compared against active v<span x-text="preview.base_version"></span>.</p>
+                </div>
+
+                <div class="preview-section">
+                  <h3>Policy diff</h3>
+                  <p class="empty-state" x-show="preview.diff.length === 0">No policy values changed.</p>
+                  <div class="table-wrap" x-show="preview.diff.length > 0">
+                    <table>
+                      <thead><tr><th>Path</th><th>Before</th><th>After</th></tr></thead>
+                      <tbody>
+                        <template x-for="change in preview.diff" :key="change.path">
+                          <tr>
+                            <td><code x-text="change.path"></code></td>
+                            <td x-text="formatValue(change.before)"></td>
+                            <td x-text="formatValue(change.after)"></td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div class="preview-section">
+                  <h3>Routing simulation</h3>
+                  <div class="simulation-list">
+                    <template x-for="entry in preview.simulations.routing" :key="entry.case_id">
+                      <article class="simulation-card">
+                        <strong x-text="entry.case_id"></strong>
+                        <div class="before-after">
+                          <div><span>Before</span><p x-text="formatValue(entry.before)"></p></div>
+                          <div><span>After</span><p x-text="formatValue(entry.after)"></p></div>
+                        </div>
+                      </article>
+                    </template>
+                  </div>
+                </div>
+
+                <div class="preview-section">
+                  <h3>Priority simulation</h3>
+                  <div class="score-list">
+                    <template x-for="entry in preview.simulations.priority" :key="entry.case_id">
+                      <div class="score-row">
+                        <span x-text="entry.case_id"></span>
+                        <strong><span x-text="entry.before_score"></span> → <span x-text="entry.after_score"></span></strong>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+
+                <div class="preview-section">
+                  <h3>Queue order</h3>
+                  <div class="before-after order-grid">
+                    <div><span>Before</span><p x-text="formatOrder(preview.simulations.queue.before_order)"></p></div>
+                    <div><span>After</span><p x-text="formatOrder(preview.simulations.queue.after_order)"></p></div>
+                  </div>
+                </div>
+              </section>
+            </template>
+          </aside>
+        </div>
+
+        <section class="panel history-panel" aria-labelledby="history-heading">
+          <div class="panel-heading">
+            <div>
+              <p class="section-index">Version history</p>
+              <h2 id="history-heading">Published policies</h2>
+            </div>
+            <p>Compare any retained version with the active policy or roll it forward as a new version.</p>
+          </div>
+
+          <p class="empty-state" x-show="history.length === 0">No version history is available.</p>
+          <div class="history-list">
+            <template x-for="record in history" :key="record.version">
+              <article class="history-row">
+                <div class="version-medallion">v<span x-text="record.version"></span></div>
+                <div class="history-detail">
+                  <div class="history-meta">
+                    <span class="status-tag" :class="historyStatusClass(record.status)" x-text="record.status"></span>
+                    <span x-text="formatDate(record.created_at)"></span>
+                    <span>by <span x-text="record.created_by"></span></span>
+                  </div>
+                  <p x-text="record.change_note"></p>
+                  <small x-show="record.rollback_from">Rolled back from v<span x-text="record.rollback_from"></span></small>
+                </div>
+                <div class="history-actions">
+                  <button class="button ghost" type="button" @click="compareVersion(record.version)" :disabled="busyAction !== null">
+                    Compare
+                  </button>
+                  <button
+                    class="button secondary"
+                    type="button"
+                    @click="prepareRollback(record)"
+                    :disabled="busyAction !== null || record.version === baseVersion"
+                  >
+                    Rollback
+                  </button>
+                </div>
+              </article>
+            </template>
+          </div>
+
+          <template x-if="comparison">
+            <div class="comparison-drawer">
+              <div class="drawer-heading">
+                <div>
+                  <p class="eyebrow">Version compare</p>
+                  <h3>v<span x-text="comparison.version"></span> → active v<span x-text="baseVersion"></span></h3>
+                </div>
+                <button class="button ghost" type="button" @click="closeComparison">Close</button>
+              </div>
+              <p class="empty-state" x-show="comparison.diff.length === 0">The selected policy matches the active draft.</p>
+              <div class="table-wrap" x-show="comparison.diff.length > 0">
+                <table>
+                  <thead><tr><th>Path</th><th>Selected</th><th>Active</th></tr></thead>
+                  <tbody>
+                    <template x-for="change in comparison.diff" :key="change.path">
+                      <tr>
+                        <td><code x-text="change.path"></code></td>
+                        <td x-text="formatValue(change.before)"></td>
+                        <td x-text="formatValue(change.after)"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+
+          <template x-if="rollbackTarget">
+            <div class="rollback-drawer">
+              <div>
+                <p class="eyebrow">Rollback confirmation</p>
+                <h3>Create a new version from v<span x-text="rollbackTarget.version"></span></h3>
+                <p>This never overwrites history. The selected policy becomes a new active version.</p>
+              </div>
+              <label for="rollback-note">Rollback change note</label>
+              <textarea
+                id="rollback-note"
+                rows="3"
+                maxlength="500"
+                :value="rollbackNote"
+                @input="updateRollbackNote($event)"
+                placeholder="Explain why this rollback is required…"
+              ></textarea>
+              <p class="field-error" x-show="rollbackNoteError" x-text="rollbackNoteError"></p>
+              <div class="button-row">
+                <button class="button ghost" type="button" @click="cancelRollback" :disabled="busyAction !== null">Cancel</button>
+                <button class="button danger" type="button" @click="rollbackPolicy" :disabled="!canRollback">
+                  <span x-show="busyAction !== 'rollback'">Rollback as new version</span>
+                  <span x-show="busyAction === 'rollback'">Rolling back…</span>
+                </button>
+              </div>
+            </div>
+          </template>
+        </section>
+      </div>
+    </main>
+
+    <footer>
+      <span>Policy v1 · private operations surface</span>
+      <span>No credential or draft is persisted by this page.</span>
+    </footer>
+  </body>
+</html>
