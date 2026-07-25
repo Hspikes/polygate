@@ -367,8 +367,18 @@
                       <article class="simulation-card">
                         <strong x-text="entry.case_id"></strong>
                         <div class="before-after">
-                          <div><span>Before</span><p x-text="formatValue(entry.before)"></p></div>
-                          <div><span>After</span><p x-text="formatValue(entry.after)"></p></div>
+                          <div class="routing-decision">
+                            <span>Before</span>
+                            <strong x-text="routingProvider(entry.before)"></strong>
+                            <p x-text="routingReason(entry.before)"></p>
+                            <small x-text="routingMetrics(entry.before)"></small>
+                          </div>
+                          <div class="routing-decision">
+                            <span>After</span>
+                            <strong x-text="routingProvider(entry.after)"></strong>
+                            <p x-text="routingReason(entry.after)"></p>
+                            <small x-text="routingMetrics(entry.after)"></small>
+                          </div>
                         </div>
                       </article>
                     </template>

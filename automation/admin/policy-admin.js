@@ -771,6 +771,22 @@
         return order.length ? order.join(" → ") : "No simulated jobs";
       },
 
+      routingProvider(decision) {
+        return decision && decision.provider ? decision.provider : "No provider selected";
+      },
+
+      routingReason(decision) {
+        return decision && decision.reason ? decision.reason : "No routing reason returned.";
+      },
+
+      routingMetrics(decision) {
+        if (!decision) return "No metrics returned";
+        const metrics = [];
+        if (decision.estimated_cost_usd !== undefined) metrics.push(`Cost $${decision.estimated_cost_usd}`);
+        if (decision.typical_latency_ms !== undefined) metrics.push(`Latency ${decision.typical_latency_ms} ms`);
+        return metrics.length ? metrics.join(" · ") : "No cost or latency estimate";
+      },
+
       formatDate(value) {
         try {
           return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
