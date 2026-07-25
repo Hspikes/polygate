@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictModel(BaseModel):
@@ -65,6 +65,87 @@ class GatewayRequest(StrictModel):
     model: str = "auto"
     messages: list[GatewayMessage]
     polygate: Preferences
+
+
+class GatewaySimulationMessage(BaseModel):
+    """Gateway's agent-capable message boundary used only for routing simulation."""
+
+    model_config = ConfigDict(extra="allow")
+
+    role: Literal["system", "developer", "user", "assistant", "tool"]
+    content: str | list[dict[str, Any]] | None = None
+    name: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    tool_call_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_role_fields(self) -> "GatewaySimulationMessage":
+        if self.role == "tool" and not self.tool_call_id:
+            raise ValueError("tool messages require tool_call_id")
+        if self.role != "assistant" and self.content is None:
+            raise ValueError(f"{self.role} messages require content")
+        if self.role == "assistant" and self.content is None and not self.tool_calls:
+            raise ValueError("assistant messages require content or tool_calls")
+        return self
+
+
+class GatewaySimulationConstraints(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    latency_target_ms: int = Field(default=3000, gt=0)
+    max_cost_usd: float = Field(default=0.01, ge=0)
+    privacy: Literal["standard", "high"] = "standard"
+    quality: Literal["balanced", "high", "cheap"] = "balanced"
+    cache_control: Literal["auto", "no-store"] = "auto"
+    session_id: str | None = Field(default=None, min_length=1, max_length=256)
+
+
+class GatewaySimulationRequest(BaseModel):
+    """A local mirror of GatewayRequest for the `/internal/routing/simulate` boundary.
+
+    Automation's existing GatewayRequest remains the intentionally smaller preview
+    contract. This model accepts exactly the agent request features consumed by
+    Gateway's internal simulation endpoint.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(default="auto", min_length=1)
+    messages: list[GatewaySimulationMessage] = Field(min_length=1)
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: Literal["none", "auto", "required"] | dict[str, Any] | None = None
+    parallel_tool_calls: bool | None = None
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    top_p: float | None = Field(default=None, ge=0, le=1)
+    max_tokens: int | None = Field(default=None, gt=0)
+    max_completion_tokens: int | None = Field(default=None, gt=0)
+    stop: str | list[str] | None = None
+    response_format: dict[str, Any] | None = None
+    stream: bool = False
+    stream_options: dict[str, Any] | None = None
+    seed: int | None = None
+    frequency_penalty: float | None = Field(default=None, ge=-2, le=2)
+    presence_penalty: float | None = Field(default=None, ge=-2, le=2)
+    logit_bias: dict[str, float] | None = None
+    logprobs: bool | None = None
+    top_logprobs: int | None = Field(default=None, ge=0, le=20)
+    user: str | None = None
+    service_tier: str | None = None
+    reasoning_effort: str | None = None
+    store: bool | None = None
+    polygate: GatewaySimulationConstraints = Field(default_factory=GatewaySimulationConstraints)
+
+    @model_validator(mode="after")
+    def validate_gateway_options(self) -> "GatewaySimulationRequest":
+        if self.stream_options is not None and not self.stream:
+            raise ValueError("stream_options requires stream=true")
+        if self.stream_options is not None:
+            include_usage = self.stream_options.get("include_usage")
+            if include_usage is not None and not isinstance(include_usage, bool):
+                raise ValueError("stream_options.include_usage must be a boolean")
+        if self.top_logprobs is not None and self.logprobs is not True:
+            raise ValueError("top_logprobs requires logprobs=true")
+        return self
 
 
 class Snippets(StrictModel):

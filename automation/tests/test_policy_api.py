@@ -5,12 +5,15 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from automation.app.main import create_app
 from automation.app.policy_auth import PolicyAdminAuthenticator
-from automation.app.policy_manager import PolicyManager
+from automation.app.policy_manager import HttpGatewaySimulator, PolicyManager
+from automation.app.policy_metrics import PUBLICATIONS
 from automation.app.policy_models import PolicyStoreDocument
 from automation.app.policy_repository import InMemoryPolicyRepository, RepositoryUnavailable
 
@@ -29,7 +32,10 @@ class FakeGatewaySimulator:
 
     def simulate(self, draft, cases):
         self.calls.append((draft, cases))
-        return [{"provider": "mock-a", "reason": "simulated"} for _ in cases]
+        return [
+            {"provider": f"tolerance-{draft.gateway.balanced_price_tolerance}", "reason": "simulated"}
+            for _ in cases
+        ]
 
 
 def _store() -> PolicyStoreDocument:
@@ -94,14 +100,37 @@ def test_validate_accepts_valid_draft_and_rejects_guardrail_violation(api):
     assert invalid.status_code == 422
 
 
+def test_validation_errors_do_not_echo_invalid_policy_values_or_change_notes(api):
+    client, _, _ = api
+    invalid_draft = copy.deepcopy(EXAMPLES["draft"])
+    invalid_draft["automation"]["scenarios"]["finance_summary"]["defaults"]["privacy"] = "sensitive-invalid-policy-value"
+    policy_error = client.post("/v1/admin/policies/validate", headers=ADMIN_HEADERS, json=invalid_draft)
+    change_note = "sensitive-change-note-" * 30
+    note_error = client.post(
+        "/v1/admin/policies/publish",
+        headers=ADMIN_HEADERS,
+        json={"base_version": 1, "change_note": change_note, "policy": EXAMPLES["draft"]},
+    )
+
+    assert policy_error.status_code == 422
+    assert note_error.status_code == 422
+    for response, secret in ((policy_error, "sensitive-invalid-policy-value"), (note_error, change_note)):
+        body = response.json()
+        assert "input" not in json.dumps(body)
+        assert "ctx" not in json.dumps(body)
+        assert secret not in json.dumps(body)
+
+
 def test_preview_uses_gateway_simulator_without_writing_repository(api):
     client, repository, simulator = api
     before = repository.load().revision
+    draft = copy.deepcopy(EXAMPLES["draft"])
+    draft["gateway"]["balanced_price_tolerance"] = 0.35
     response = client.post(
         "/v1/admin/policies/preview",
         headers=ADMIN_HEADERS,
         json={
-            "policy": EXAMPLES["draft"],
+            "policy": draft,
             "gateway_cases": [
                 {
                     "model": "auto",
@@ -119,9 +148,79 @@ def test_preview_uses_gateway_simulator_without_writing_repository(api):
 
     assert response.status_code == 200
     assert response.json()["base_version"] == 1
-    assert response.json()["simulations"]["routing"] == [{"provider": "mock-a", "reason": "simulated"}]
+    assert response.json()["simulations"]["routing"] == [
+        {
+            "case_id": "balanced-standard",
+            "before": {"provider": "tolerance-0.2", "reason": "simulated"},
+            "after": {"provider": "tolerance-0.35", "reason": "simulated"},
+        }
+    ]
     assert repository.load().revision == before
-    assert len(simulator.calls) == 1
+    assert len(simulator.calls) == 2
+
+
+def test_preview_forwards_a_gateway_compatible_agent_request_to_simulation():
+    requests: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        tolerance = body["gateway_policy"]["balanced_price_tolerance"]
+        return httpx.Response(
+            200,
+            json={
+                "provider": f"tolerance-{tolerance}",
+                "reason": "simulated",
+                "estimated_cost_usd": 0.01,
+                "typical_latency_ms": 100,
+            },
+        )
+
+    app = create_app(
+        policy_manager=PolicyManager(InMemoryPolicyRepository(_store())),
+        policy_authenticator=PolicyAdminAuthenticator("test-policy-admin"),
+        gateway_simulator=HttpGatewaySimulator(
+            "http://gateway.test", client=httpx.Client(transport=httpx.MockTransport(handler))
+        ),
+    )
+    client = TestClient(app)
+    agent_case = {
+        "model": "auto",
+        "messages": [{"role": "developer", "content": "follow the tool protocol"}],
+        "tools": [{"type": "function", "function": {"name": "lookup", "parameters": {}}}],
+        "tool_choice": "auto",
+        "parallel_tool_calls": True,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        "polygate": {
+            "quality": "balanced",
+            "privacy": "standard",
+            "max_cost_usd": 0.01,
+            "latency_target_ms": 1000,
+            "cache_control": "no-store",
+            "session_id": "agent-session",
+        },
+    }
+
+    accepted = client.post(
+        "/v1/admin/policies/preview",
+        headers=ADMIN_HEADERS,
+        json={"policy": EXAMPLES["draft"], "gateway_cases": [agent_case]},
+    )
+    rejected_role = client.post(
+        "/v1/admin/policies/preview",
+        headers=ADMIN_HEADERS,
+        json={
+            "policy": EXAMPLES["draft"],
+            "gateway_cases": [{**agent_case, "messages": [{"role": "invalid", "content": "x"}]}],
+        },
+    )
+
+    assert accepted.status_code == 200
+    assert rejected_role.status_code == 422
+    assert len(requests) == 2
+    assert requests[0]["request"] == agent_case
+    assert requests[0]["gateway_policy"] == EXAMPLES["draft"]["gateway"]
 
 
 def test_publish_detects_stale_base_version_and_rollback_creates_a_new_version(api):
@@ -148,6 +247,35 @@ def test_publish_detects_stale_base_version_and_rollback_creates_a_new_version(a
     assert rollback.status_code == 201
     assert rollback.json()["version"] == 3
     assert rollback.json()["rollback_from"] == 1
+
+
+def test_rejected_publication_metrics_include_authenticated_validation_and_missing_target_failures(api):
+    client, _, _ = api
+    publish_counter = PUBLICATIONS.labels(action="publish", result="rejected")._value.get()
+    rollback_counter = PUBLICATIONS.labels(action="rollback", result="rejected")._value.get()
+    invalid_draft = copy.deepcopy(EXAMPLES["draft"])
+    invalid_draft["automation"]["scenarios"]["finance_summary"]["defaults"]["privacy"] = "standard"
+    publish_invalid = client.post(
+        "/v1/admin/policies/publish",
+        headers=ADMIN_HEADERS,
+        json={"base_version": 1, "change_note": "invalid policy", "policy": invalid_draft},
+    )
+    rollback_invalid = client.post(
+        "/v1/admin/policies/1/rollback",
+        headers=ADMIN_HEADERS,
+        json={"base_version": 1, "change_note": "x" * 501},
+    )
+    rollback_missing = client.post(
+        "/v1/admin/policies/99/rollback",
+        headers=ADMIN_HEADERS,
+        json={"base_version": 1, "change_note": "missing target"},
+    )
+
+    assert publish_invalid.status_code == 422
+    assert rollback_invalid.status_code == 422
+    assert rollback_missing.status_code == 404
+    assert PUBLICATIONS.labels(action="publish", result="rejected")._value.get() == publish_counter + 1
+    assert PUBLICATIONS.labels(action="rollback", result="rejected")._value.get() == rollback_counter + 2
 
 
 def test_metrics_are_exposed_as_prometheus_text(api):
@@ -198,3 +326,15 @@ def test_environment_admin_key_is_disabled_without_explicit_opt_in(monkeypatch):
         authenticator.require("Bearer environment-key")
 
     assert compare.called
+
+
+def test_admin_authentication_rejects_raw_or_malformed_bearer_values():
+    authenticator = PolicyAdminAuthenticator("test-policy-admin")
+
+    with patch("automation.app.policy_auth.secrets.compare_digest", wraps=__import__("secrets").compare_digest) as compare:
+        for authorization in ("test-policy-admin", "bearer test-policy-admin", "Bearer"):
+            with pytest.raises(HTTPException) as error:
+                authenticator.require(authorization)
+            assert error.value.status_code == 401
+
+    assert compare.call_count == 3
