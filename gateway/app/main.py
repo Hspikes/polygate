@@ -47,6 +47,7 @@ from app.metrics import (
     render_metrics,
 )
 from app.models import DecisionCard, GatewayRequest, Tokens
+from app.policy import GatewayPolicyRuntime, GatewayPolicySnapshot  # Task 5
 from app.registry import load_providers
 from app.resilience import ResilienceSettings
 from app.retry import (
@@ -87,7 +88,9 @@ BREAKER = CircuitBreakerRegistry()
 CACHE = Cache()
 DECISIONS = DecisionStore(CACHE)
 RELIABILITY = ResilienceSettings.from_env()
+POLICY_RUNTIME = GatewayPolicyRuntime()  # Task 5: loads mounted policy-store.json, then polls Policy API
 _HEALTH_TASK: asyncio.Task | None = None
+_POLICY_TASK: asyncio.Task | None = None  # Task 5
 
 
 class ProviderTimeoutError(RuntimeError):
@@ -98,23 +101,44 @@ class ProviderTimeoutError(RuntimeError):
         self.message = message
 
 
+async def _policy_refresh_loop() -> None:
+    """Task 5: poll the Policy API every POLICY_RUNTIME.refresh_interval_seconds.
+
+    refresh_once() is synchronous (uses a plain httpx.Client, which keeps the
+    unit tests simple with httpx.MockTransport); run it in a thread so it
+    never blocks the event loop. Any failure inside refresh_once() is
+    swallowed there and logged — Last Known Good is preserved, this loop
+    never raises.
+    """
+    while True:
+        await asyncio.sleep(POLICY_RUNTIME.refresh_interval_seconds)
+        await run_in_threadpool(POLICY_RUNTIME.refresh_once)
+
+
 @app.on_event("startup")
 async def startup_event() -> None:
-    global _HEALTH_TASK
+    global _HEALTH_TASK, _POLICY_TASK
     await startup_async_client()
     probeable = [provider for provider in PROVIDERS if provider.get("kind") != "real"]
     if probeable and _HEALTH_TASK is None:
         _HEALTH_TASK = asyncio.create_task(health_check_loop(probeable, BREAKER))
+    if _POLICY_TASK is None:
+        _POLICY_TASK = asyncio.create_task(_policy_refresh_loop())  # Task 5
 
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
-    global _HEALTH_TASK
+    global _HEALTH_TASK, _POLICY_TASK
     if _HEALTH_TASK is not None:
         _HEALTH_TASK.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await _HEALTH_TASK
         _HEALTH_TASK = None
+    if _POLICY_TASK is not None:  # Task 5
+        _POLICY_TASK.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _POLICY_TASK
+        _POLICY_TASK = None
     await shutdown_async_client()
 
 
@@ -325,6 +349,7 @@ def _select(
     messages: list[dict],
     req: GatewayRequest,
     required_capabilities: set[str],
+    policy_snapshot: GatewayPolicySnapshot | None = None,  # Task 5
 ) -> tuple[dict, str]:
     try:
         chosen, reason, _ = select_provider(
@@ -333,6 +358,7 @@ def _select(
             req.polygate,
             BREAKER.health_snapshot(),
             required_capabilities,
+            policy=policy_snapshot.gateway if policy_snapshot is not None else None,  # Task 5
         )
         return chosen, reason
     except RuntimeError as exc:
@@ -367,6 +393,13 @@ async def chat_completions(
     payload = req.provider_payload()
     required_capabilities = req.required_capabilities()
     started = time.perf_counter()
+
+    # Task 5, Step 5: one immutable policy snapshot per request. The same
+    # snapshot is used for the initial routing decision and every failover
+    # attempt within this request — a policy update mid-flight must not mix
+    # versions inside a single request's decision-making.
+    policy_snapshot = POLICY_RUNTIME.snapshot()
+    request.state.policy_version = policy_snapshot.version
 
     forced = _forced_provider(req, required_capabilities)
 
@@ -413,7 +446,9 @@ async def chat_completions(
         chosen, reason = forced, f"用户强制指定 {forced['name']}"
     else:
         try:
-            chosen, reason = _select(PROVIDERS, messages, req, required_capabilities)
+            chosen, reason = _select(
+                PROVIDERS, messages, req, required_capabilities, policy_snapshot  # Task 5
+            )
         except HTTPException:
             request.state.metric_outcome = "routing_error"
             raise
@@ -431,6 +466,7 @@ async def chat_completions(
             required_capabilities=required_capabilities,
             started=started,
             deadline=deadline,
+            policy_snapshot=policy_snapshot,  # Task 5
         )
 
     deadline = _new_deadline(RELIABILITY.non_stream_budget_seconds)
@@ -444,6 +480,7 @@ async def chat_completions(
         request=request,
         request_id=request_id,
         deadline=deadline,
+        policy_snapshot=policy_snapshot,  # Task 5
     )
     cost = estimate_cost(chosen, result.input_tokens, result.output_tokens)
     latency_ms = int((time.perf_counter() - started) * 1000)
@@ -492,6 +529,7 @@ async def _call_non_stream(
     request: Request,
     request_id: str,
     deadline: float,
+    policy_snapshot: GatewayPolicySnapshot | None = None,  # Task 5
 ):
     tried_names: list[str] = []
     failed_retries = 0
@@ -558,7 +596,7 @@ async def _call_non_stream(
                 ) from exc
             try:
                 fallback, fallback_reason = _select(
-                    remaining, messages, req, required_capabilities
+                    remaining, messages, req, required_capabilities, policy_snapshot  # Task 5
                 )
             except HTTPException as route_error:
                 if provider_timed_out:
@@ -591,6 +629,7 @@ async def _stream_response(
     required_capabilities: set[str],
     started: float,
     deadline: float,
+    policy_snapshot: GatewayPolicySnapshot | None = None,  # Task 5
 ):
     tried_names: list[str] = []
     failed_retries = 0
@@ -657,7 +696,7 @@ async def _stream_response(
                 ) from exc
             try:
                 fallback, fallback_reason = _select(
-                    remaining, messages, req, required_capabilities
+                    remaining, messages, req, required_capabilities, policy_snapshot  # Task 5
                 )
             except HTTPException as route_error:
                 if provider_timed_out:
