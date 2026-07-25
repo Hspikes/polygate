@@ -11,7 +11,7 @@ spec:
     metadata:
       labels: { app: automation }
     spec:
-      automountServiceAccountToken: false
+      serviceAccountName: polygate-policy-controller
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -25,6 +25,14 @@ spec:
           env:
             - { name: GATEWAY_URL, value: "http://gateway:8000" }
             - { name: AUTOMATION_REDIS_URL, value: "redis://redis:6379/0" }
+            - { name: POLICY_FILE, value: "/config/policy-store.json" }
+            - { name: POLICY_ADMIN_KEY_FILE, value: "/var/run/secrets/polygate-policy/admin-key" }
+            - { name: POLICY_CONFIGMAP_NAME, value: "polygate-routing-policy" }
+            - { name: POLICY_CONFIGMAP_KEY, value: "policy-store.json" }
+            - { name: POLICY_REFRESH_SECONDS, value: "5" }
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: { fieldPath: metadata.namespace }
           resources:
             requests: { cpu: "50m", memory: "64Mi" }
             limits: { cpu: "300m", memory: "256Mi" }
@@ -46,9 +54,23 @@ spec:
             readOnlyRootFilesystem: true
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
+            - { name: policy-config, mountPath: /config, readOnly: true }
+            - { name: policy-admin, mountPath: /var/run/secrets/polygate-policy, readOnly: true }
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: policy-config
+          projected:
+            sources:
+              - configMap:
+                  name: polygate-routing-policy
+                  items:
+                    - { key: policy-store.json, path: policy-store.json }
+        - name: policy-admin
+          secret:
+            secretName: polygate-policy-admin
+            items:
+              - { key: admin-key, path: admin-key }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -80,6 +102,9 @@ spec:
           env:
             - { name: GATEWAY_URL, value: "http://gateway:8000" }
             - { name: AUTOMATION_REDIS_URL, value: "redis://redis:6379/0" }
+            - { name: POLICY_FILE, value: "/config/policy-store.json" }
+            - { name: POLICY_API_URL, value: "http://automation:8020" }
+            - { name: POLICY_REFRESH_SECONDS, value: "5" }
             - { name: WORKER_CONCURRENCY, value: "1" }
             - { name: WORKER_HEALTH_PORT, value: "9000" }
             - name: POLYGATE_API_KEY
@@ -106,9 +131,17 @@ spec:
             readOnlyRootFilesystem: true
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
+            - { name: policy-config, mountPath: /config, readOnly: true }
       volumes:
         - name: tmp
           emptyDir: {}
+        - name: policy-config
+          projected:
+            sources:
+              - configMap:
+                  name: polygate-routing-policy
+                  items:
+                    - { key: policy-store.json, path: policy-store.json }
 ---
 apiVersion: v1
 kind: Service
