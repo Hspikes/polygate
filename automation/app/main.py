@@ -19,8 +19,10 @@ from automation.app.models import (
     Snippets,
     TemplateDefinition,
 )
+from automation.app.policy_manager import PolicyManager
+from automation.app.policy_models import PolicyVersion
 from automation.app.store import AutomationStore, InMemoryAutomationStore
-from automation.app.templates import TEMPLATE_BY_SCENARIO, TEMPLATES, URGENCY_SCORE
+from automation.app.templates import TEMPLATES
 from automation.app.redis_store import RedisAutomationStore
 
 PREVIEW_TTL_SECONDS = 600
@@ -28,24 +30,33 @@ POLYGATE_URL_DEFAULT = "http://localhost:8000"
 POLYGATE_URL_PLACEHOLDER = "${POLYGATE_URL:-" + POLYGATE_URL_DEFAULT + "}"
 
 
-def _compile_preview(intent: AutomationIntent) -> PreviewResponse:
+def _compile_preview(
+    intent: AutomationIntent,
+    policy_version: PolicyVersion,
+) -> PreviewResponse:
     normalized = intent.model_copy(deep=True)
     adjustments: list[str] = []
-    template = TEMPLATE_BY_SCENARIO[normalized.scenario]
 
     if normalized.scenario.value == "finance_summary" and normalized.preferences.privacy != "high":
         normalized.preferences.privacy = "high"
         adjustments.append("finance_summary requires privacy=high")
 
-    urgency_score = URGENCY_SCORE[normalized.urgency.value]
-    score = urgency_score + template.scenario_weight
+    automation_policy = policy_version.policy.automation
+    urgency_score = automation_policy.urgency_scores.model_dump()[
+        normalized.urgency.value
+    ]
+    scenario_policy = automation_policy.scenarios.model_dump()[
+        normalized.scenario.value
+    ]
+    scenario_weight = scenario_policy["weight"]
+    score = urgency_score + scenario_weight
     priority = PriorityDecision(
         **{
             "class": normalized.urgency,
             "initial_score": score,
             "reason": (
                 f"{normalized.urgency.value} urgency ({urgency_score}) + "
-                f"{normalized.scenario.value} scenario ({template.scenario_weight})"
+                f"{normalized.scenario.value} scenario ({scenario_weight})"
             ),
         }
     )
@@ -83,10 +94,15 @@ def _compile_preview(intent: AutomationIntent) -> PreviewResponse:
         gateway_request=gateway_request,
         snippets=snippets,
         policy_adjustments=adjustments,
+        policy_version=policy_version.version,
     )
 
 
-def create_app(store: AutomationStore | None = None) -> FastAPI:
+def create_app(
+    store: AutomationStore | None = None,
+    policy_manager: PolicyManager | None = None,
+    gateway_simulator: object | None = None,
+) -> FastAPI:
     app = FastAPI(title="PolyGate Automation API", version="0.1.0-skeleton")
     persistence = store or InMemoryAutomationStore()
 
@@ -110,7 +126,12 @@ def create_app(store: AutomationStore | None = None) -> FastAPI:
 
     @app.post("/v1/requests/preview", response_model=PreviewResponse, response_model_exclude_none=True)
     def preview(intent: AutomationIntent) -> PreviewResponse:
-        compiled = _compile_preview(intent)
+        if policy_manager is None:
+            raise HTTPException(
+                status_code=503,
+                detail="policy manager unavailable",
+            )
+        compiled = _compile_preview(intent, policy_manager.active)
         persistence.save_preview(compiled)
         return compiled
 

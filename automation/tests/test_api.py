@@ -1,10 +1,27 @@
 from __future__ import annotations
 
+import copy
+import json
 import unittest
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from automation.app.main import create_app
+from automation.app.policy_manager import PolicyManager
+from automation.app.policy_models import PolicyDraft, PolicyStoreDocument
+from automation.app.policy_repository import InMemoryPolicyRepository
+
+
+POLICY_EXAMPLES_FILE = (
+    Path(__file__).resolve().parents[2] / "contracts" / "policy-examples.json"
+)
+POLICY_EXAMPLES = json.loads(POLICY_EXAMPLES_FILE.read_text(encoding="utf-8"))
+
+
+def policy_manager() -> PolicyManager:
+    store = PolicyStoreDocument.model_validate(POLICY_EXAMPLES["store"])
+    return PolicyManager(InMemoryPolicyRepository(store))
 
 
 def intent(**overrides):
@@ -27,7 +44,8 @@ def intent(**overrides):
 
 class AutomationApiTests(unittest.TestCase):
     def setUp(self):
-        self.client = TestClient(create_app())
+        self.policy_manager = policy_manager()
+        self.client = TestClient(create_app(policy_manager=self.policy_manager))
 
     def test_health_and_four_templates_are_available(self):
         self.assertEqual(self.client.get("/health").json(), {"status": "ok", "service": "automation"})
@@ -46,6 +64,7 @@ class AutomationApiTests(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["expires_in_seconds"], 600)
         self.assertEqual(body["priority"]["initial_score"], 140)
+        self.assertEqual(body["policy_version"], 4)
         self.assertEqual(body["gateway_request"]["model"], "auto")
         self.assertEqual(body["gateway_request"]["messages"][0]["content"], "Analyse the production incident log.")
         self.assertIn("/v1/chat/completions", body["snippets"]["curl"])
@@ -55,6 +74,24 @@ class AutomationApiTests(unittest.TestCase):
             body["snippets"]["python"],
         )
         compile(body["snippets"]["python"], "<polygate-preview>", "exec")
+
+    def test_preview_uses_the_latest_policy_from_the_injected_manager(self):
+        changed = copy.deepcopy(POLICY_EXAMPLES["draft"])
+        changed["automation"]["urgency_scores"]["critical"] = 200
+        changed["automation"]["scenarios"]["production_incident"]["weight"] = 50
+        result = self.policy_manager.publish(
+            base_version=4,
+            draft=PolicyDraft.model_validate(changed),
+            change_note="Raise incident priority",
+            actor="policy-admin",
+        )
+
+        response = self.client.post("/v1/requests/preview", json=intent())
+
+        self.assertEqual(result.version, 5)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["priority"]["initial_score"], 250)
+        self.assertEqual(response.json()["policy_version"], 5)
 
     def test_finance_template_locks_privacy_to_high(self):
         finance = intent(
