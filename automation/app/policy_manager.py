@@ -19,7 +19,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
-from automation.app.models import AutomationIntent
+import httpx
+
+from automation.app.models import AutomationIntent, GatewayRequest
 from automation.app.policy_models import (
     PolicyDraft,
     PolicyStoreDocument,
@@ -56,6 +58,45 @@ class PolicyCache(Protocol):
     def set_active(self, response) -> None: ...
 
 
+class RedisPolicyCache:
+    def __init__(self, redis_client, key: str = "polygate:policy:active") -> None:
+        self._redis = redis_client
+        self._key = key
+
+    def set_active(self, response) -> None:
+        self._redis.set(self._key, response.model_dump_json())
+
+
+class GatewaySimulator(Protocol):
+    def simulate(self, draft: PolicyDraft, cases: list[GatewayRequest]) -> list[dict]: ...
+
+
+class HttpGatewaySimulator:
+    def __init__(self, gateway_url: str, client: httpx.Client | None = None) -> None:
+        self._gateway_url = gateway_url.rstrip("/")
+        self._client = client or httpx.Client(timeout=5.0)
+
+    def simulate(self, draft: PolicyDraft, cases: list[GatewayRequest]) -> list[dict]:
+        results: list[dict] = []
+        for case in cases:
+            try:
+                response = self._client.post(
+                    f"{self._gateway_url}/internal/routing/simulate",
+                    json={
+                        "request": case.model_dump(mode="json"),
+                        "gateway_policy": draft.gateway.model_dump(mode="json"),
+                    },
+                )
+                response.raise_for_status()
+                result = response.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                raise RuntimeError("gateway policy simulation is unavailable") from exc
+            if not isinstance(result, dict):
+                raise RuntimeError("gateway policy simulation returned an invalid response")
+            results.append(result)
+        return results
+
+
 class _NullCache:
     """默认空缓存：什么都不做，永不失败。"""
     def set_active(self, response) -> None:
@@ -77,6 +118,14 @@ class PolicyManager:
     def active(self) -> PolicyVersion:
         # 返回一个深拷贝，防止调用方改到内部状态（active policy 对外不可变）
         return self._active.model_copy(deep=True)
+
+    @property
+    def history(self) -> list[PolicyVersion]:
+        document = self._repository.load().document
+        return [record.model_copy(deep=True) for record in document.versions]
+
+    def get_version(self, version: int) -> PolicyVersion | None:
+        return next((record for record in self.history if record.version == version), None)
 
     # ---------- validate ----------
     def validate(self, draft: PolicyDraft) -> list[str]:
