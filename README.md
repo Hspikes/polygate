@@ -169,6 +169,17 @@ POLICY_ADMIN_KEY=local-policy-admin-development \
 `automation-peak-test.sh` 提交顺序刻意与优先级相反（low 先提交），所以看到
 critical 最先被执行才说明调度按 `effective_priority` 生效，而不是碰巧。
 
+配置了真实 DeepSeek Key 时，再跑 Flash/Pro 质量路由闸门。它会产生少量
+真实 API 费用，并验证强制 Flash/Pro、高质量选 Pro、紧预算回落 Flash、Web SSE、
+Decision Record 以及 Policy Editor Preview：
+
+```bash
+set -a; source .env; set +a
+POLYGATE_API_KEY="${POLYGATE_API_KEYS%%,*}" \
+POLICY_ADMIN_KEY=local-policy-admin-development \
+  ./scripts/deepseek-v4-routing-smoke-test.sh
+```
+
 **5. 安全不变量**
 
 | 不变量 | 怎么验 |

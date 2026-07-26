@@ -45,8 +45,10 @@ class WebDeploymentTests(unittest.TestCase):
 
     def test_nginx_proxies_api_and_sets_browser_security_headers(self):
         config = (ROOT / "web/nginx/default.conf").read_text(encoding="utf-8")
+        self.assertIn("location /api/v1/", config)
+        self.assertIn("proxy_pass http://gateway:8000/v1/", config)
         self.assertIn("location /api/", config)
-        self.assertIn("proxy_pass http://gateway:8000/", config)
+        self.assertIn("return 404;", config)
         self.assertIn("location = /healthz", config)
         self.assertIn("Content-Security-Policy", config)
         self.assertIn("frame-ancestors 'none'", config)
@@ -58,6 +60,14 @@ class WebDeploymentTests(unittest.TestCase):
         self.assertEqual(web["build"], "./web")
         self.assertIn("gateway", web["depends_on"])
         self.assertIn("8080:8080", web["ports"])
+        self.assertEqual(
+            web["healthcheck"]["test"],
+            ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"],
+        )
+
+    def test_compose_accepts_worker_gateway_identity(self):
+        compose_text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("POLYGATE_API_KEY: ${POLYGATE_API_KEY:-}", compose_text)
 
     def test_web_image_is_static_and_non_privileged(self):
         dockerfile = (ROOT / "web/Dockerfile").read_text(encoding="utf-8")
