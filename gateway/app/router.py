@@ -29,6 +29,14 @@ def _supports(provider: dict, required_capabilities: set[str]) -> bool:
     return not missing_capabilities(provider, required_capabilities)
 
 
+def _quality_rank(provider: dict) -> int:
+    """Return static model quality metadata without changing Policy v1."""
+    rank = provider.get("quality_rank", 0)
+    if isinstance(rank, bool) or not isinstance(rank, int) or rank < 0:
+        raise RuntimeError(f"provider {provider['name']} has invalid quality_rank")
+    return rank
+
+
 def select_provider(
     providers: list[dict],
     messages: list[dict],
@@ -107,8 +115,16 @@ def select_provider(
             chosen = min(latency_pool, key=est)
             policy_str = "quality=high → high_quality_strategy=lowest_cost，直接选最低成本"
         elif reals:
-            chosen = min(reals, key=est)
-            policy_str = "quality=high → 优先真实 Provider"
+            highest_rank = max(_quality_rank(provider) for provider in reals)
+            highest_quality_reals = [
+                provider for provider in reals
+                if _quality_rank(provider) == highest_rank
+            ]
+            chosen = min(highest_quality_reals, key=est)
+            policy_str = (
+                "quality=high → 优先最高质量真实 Provider"
+                f"（quality_rank={highest_rank}）"
+            )
         else:
             chosen = min(latency_pool, key=est)
             policy_str = "quality=high → 无可用真实 Provider（可能已被隐私约束排除），退化为最低成本"

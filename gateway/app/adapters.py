@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
@@ -120,7 +121,16 @@ def _normalize_messages(provider: dict, messages: list[dict[str, Any]]) -> list[
 
 def build_provider_payload(provider: dict, payload: dict[str, Any]) -> dict[str, Any]:
     """Replace the virtual model and adapt only provider-specific differences."""
-    body = dict(payload)
+    request_defaults = provider.get("request_defaults") or {}
+    if not isinstance(request_defaults, dict):
+        raise ProviderPayloadError(
+            f"provider {provider['name']} has invalid request_defaults"
+        )
+    # Defaults are trusted registry metadata. The canonical client payload wins
+    # for standard fields, while vendor-only options (for example DeepSeek V4's
+    # thinking toggle) can be supplied without widening the public API.
+    body = deepcopy(request_defaults)
+    body.update(payload)
     body.pop("polygate", None)
     body["model"] = provider.get("model", "default")
     body["messages"] = _normalize_messages(provider, list(body.get("messages", [])))

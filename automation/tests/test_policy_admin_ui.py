@@ -153,6 +153,8 @@ def test_editor_contains_every_fixed_policy_v1_control_and_guardrail(client: Tes
     assert ':disabled="field.disabled"' in html
     assert "Finance summary privacy" in html
     assert "Locked guardrail" in html
+    assert "Prefer highest-quality real model" in javascript
+    assert "highest quality-ranked eligible real model" in javascript
 
 
 def test_release_preview_history_compare_and_rollback_controls_exist(client: TestClient) -> None:

@@ -77,6 +77,21 @@ class RoutingSimulationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("provider", response.json())
 
+    def test_policy_editor_preview_routes_high_quality_to_deepseek_pro(self):
+        body = {
+            **SIMULATION_REQUEST_BODY,
+            "gateway_policy": {
+                **SIMULATION_REQUEST_BODY["gateway_policy"],
+                "high_quality_strategy": "prefer_real",
+            },
+        }
+
+        response = client.post("/internal/routing/simulate", json=body)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["provider"], "real-b")
+        self.assertIn("quality_rank=2", response.json()["reason"])
+
     def test_simulation_endpoint_is_absent_from_openapi_schema(self):
         schema = client.get("/openapi.json").json()
         self.assertNotIn("/internal/routing/simulate", schema.get("paths", {}))

@@ -40,6 +40,19 @@ class RouterQualityPolicyTests(unittest.TestCase):
              "price_per_1k_input": 0.0001, "price_per_1k_output": 0.0001,
              "typical_latency_ms": 300},
         ]
+        self.deepseek_tiers = [
+            {"name": "real-a", "kind": "real", "privacy": "external",
+             "quality_rank": 1,
+             "price_per_1k_input": 0.001, "price_per_1k_output": 0.001,
+             "typical_latency_ms": 500},
+            {"name": "real-b", "kind": "real", "privacy": "external",
+             "quality_rank": 2,
+             "price_per_1k_input": 0.01, "price_per_1k_output": 0.01,
+             "typical_latency_ms": 900},
+            {"name": "mock-x", "kind": "mock", "privacy": "internal",
+             "price_per_1k_input": 0.0001, "price_per_1k_output": 0.0001,
+             "typical_latency_ms": 300},
+        ]
 
     def test_cheap_always_picks_cheapest(self):
         chosen, reason, _ = select_provider(self.providers_close_price, MESSAGES, _constraints(quality="cheap"))
@@ -60,7 +73,46 @@ class RouterQualityPolicyTests(unittest.TestCase):
     def test_high_prefers_real_when_available(self):
         chosen, reason, _ = select_provider(self.providers_close_price, MESSAGES, _constraints(quality="high"))
         self.assertEqual(chosen["name"], "real-x")
-        self.assertIn("优先真实 Provider", reason)
+        self.assertIn("最高质量真实 Provider", reason)
+
+    def test_high_prefers_highest_quality_rank_over_cheaper_real(self):
+        chosen, reason, _ = select_provider(
+            self.deepseek_tiers,
+            MESSAGES,
+            _constraints(quality="high"),
+        )
+
+        self.assertEqual(chosen["name"], "real-b")
+        self.assertIn("最高质量真实 Provider", reason)
+        self.assertIn("quality_rank=2", reason)
+
+    def test_high_falls_back_to_flash_when_pro_exceeds_budget(self):
+        chosen, _, _ = select_provider(
+            self.deepseek_tiers,
+            MESSAGES,
+            _constraints(quality="high", max_cost_usd=0.001),
+        )
+
+        self.assertEqual(chosen["name"], "real-a")
+
+    def test_high_falls_back_to_flash_when_pro_is_unhealthy(self):
+        chosen, _, _ = select_provider(
+            self.deepseek_tiers,
+            MESSAGES,
+            _constraints(quality="high"),
+            health={"real-b": "down"},
+        )
+
+        self.assertEqual(chosen["name"], "real-a")
+
+    def test_cheap_ignores_quality_rank(self):
+        chosen, _, _ = select_provider(
+            self.deepseek_tiers,
+            MESSAGES,
+            _constraints(quality="cheap"),
+        )
+
+        self.assertEqual(chosen["name"], "mock-x")
 
     def test_high_reason_is_honest_when_privacy_excludes_all_real(self):
         """privacy=high 把唯一的 real 过滤掉之后，quality=high 的 reason 不应该继续宣称
@@ -71,7 +123,7 @@ class RouterQualityPolicyTests(unittest.TestCase):
         )
         self.assertEqual(chosen["name"], "mock-x")  # real-x 是 external，被 privacy=high 过滤掉了
         self.assertIn("无可用真实 Provider", reason)
-        self.assertNotIn("优先真实 Provider", reason)
+        self.assertNotIn("最高质量真实 Provider", reason)
 
 
 if __name__ == "__main__":

@@ -88,10 +88,10 @@
       "gateway.high_quality_strategy",
       "High quality strategy",
       [
-        { value: "prefer_real", label: "Prefer real provider" },
+        { value: "prefer_real", label: "Prefer highest-quality real model" },
         { value: "lowest_cost", label: "Lowest cost" },
       ],
-      "Define how high-quality requests choose between eligible providers.",
+      "Choose the highest quality-ranked eligible real model, or minimize cost.",
     ),
   ]);
 
