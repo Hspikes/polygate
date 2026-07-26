@@ -41,11 +41,11 @@ class RouterQualityPolicyTests(unittest.TestCase):
              "typical_latency_ms": 300},
         ]
         self.deepseek_tiers = [
-            {"name": "real-a", "kind": "real", "privacy": "external",
+            {"name": "deepseek-flash", "kind": "real", "privacy": "external",
              "quality_rank": 1,
              "price_per_1k_input": 0.001, "price_per_1k_output": 0.001,
              "typical_latency_ms": 500},
-            {"name": "real-b", "kind": "real", "privacy": "external",
+            {"name": "deepseek-pro", "kind": "real", "privacy": "external",
              "quality_rank": 2,
              "price_per_1k_input": 0.01, "price_per_1k_output": 0.01,
              "typical_latency_ms": 900},
@@ -82,7 +82,7 @@ class RouterQualityPolicyTests(unittest.TestCase):
             _constraints(quality="high"),
         )
 
-        self.assertEqual(chosen["name"], "real-b")
+        self.assertEqual(chosen["name"], "deepseek-pro")
         self.assertIn("最高质量真实 Provider", reason)
         self.assertIn("quality_rank=2", reason)
 
@@ -93,17 +93,17 @@ class RouterQualityPolicyTests(unittest.TestCase):
             _constraints(quality="high", max_cost_usd=0.001),
         )
 
-        self.assertEqual(chosen["name"], "real-a")
+        self.assertEqual(chosen["name"], "deepseek-flash")
 
     def test_high_falls_back_to_flash_when_pro_is_unhealthy(self):
         chosen, _, _ = select_provider(
             self.deepseek_tiers,
             MESSAGES,
             _constraints(quality="high"),
-            health={"real-b": "down"},
+            health={"deepseek-pro": "down"},
         )
 
-        self.assertEqual(chosen["name"], "real-a")
+        self.assertEqual(chosen["name"], "deepseek-flash")
 
     def test_cheap_ignores_quality_rank(self):
         chosen, _, _ = select_provider(

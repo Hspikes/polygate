@@ -48,12 +48,12 @@ class CacheBypassRegressionTests(unittest.TestCase):
 
     def test_high_privacy_external_still_403_after_cache_warm(self):
         """先用 privacy=standard + model=auto 跑一次预热缓存，
-        再用同样的 messages、但 privacy=high + 强制指定外部 provider real-a，
+        再用同样的 messages、但 privacy=high + 强制指定外部 provider deepseek-flash，
         预期依然是 403，而不是被缓存放行。"""
         warm = self._post("auto", privacy="standard")
         self.assertEqual(warm.status_code, 200)
 
-        resp = self._post("real-a", privacy="high")
+        resp = self._post("deepseek-flash", privacy="high")
         self.assertEqual(resp.status_code, 403)
         self.assertIn("privacy=high", resp.json()["detail"])
 

@@ -89,7 +89,7 @@ class RoutingSimulationTests(unittest.TestCase):
         response = client.post("/internal/routing/simulate", json=body)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["provider"], "real-b")
+        self.assertEqual(response.json()["provider"], "deepseek-pro")
         self.assertIn("quality_rank=2", response.json()["reason"])
 
     def test_simulation_endpoint_is_absent_from_openapi_schema(self):

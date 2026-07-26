@@ -186,7 +186,7 @@ POLICY_ADMIN_KEY=local-policy-admin-development \
 |---|---|
 | Policy Editor 不经 Web Nginx 暴露 | `curl :8080/admin/policies` 返回的必须是 Chat 的 SPA 兜底页，不是编辑器——**只看状态码会得到假阳性**，200 是 SPA 兜底 |
 | admin key 不进日志 | `docker compose logs \| grep -F "<key>"` 无命中 |
-| `privacy=high` 不落到 real-a | 发一个 `privacy=high` 请求，看 `polygate.provider` |
+| `privacy=high` 不落到 DeepSeek | 发一个 `privacy=high` 请求，看 `polygate.provider` |
 | finance privacy 不可降级 | 改 `finance_summary.defaults.privacy` 后 validate/publish 均应 422 |
 | `/internal/routing/simulate` 不外露 | 不在 Gateway OpenAPI 中；**经 `:8080/api/` 也必须不可达**（见下） |
 | 已存在的 ConfigMap 不被覆盖 | `test-deployment-policy.sh` 已用 fake deploy 断言 |

@@ -111,7 +111,7 @@ class AgentCompatibilityTests(unittest.TestCase):
     def test_deepseek_adapter_flattens_text_blocks_and_maps_developer(self):
         request = GatewayRequest.model_validate(pi_payload())
         provider = {
-            "name": "real-a",
+            "name": "deepseek-flash",
             "model": "deepseek-v4-flash",
             "request_defaults": {"thinking": {"type": "disabled"}},
             "capabilities": {

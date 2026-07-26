@@ -102,7 +102,7 @@
         {
           "case_id": "balanced-standard",
           "before": { "provider": "mock-b", "reason": "lowest estimated cost", "estimated_cost_usd": 0.000021, "typical_latency_ms": 900 },
-          "after": { "provider": "real-a", "reason": "real provider is within the configured tolerance", "estimated_cost_usd": 0.000028, "typical_latency_ms": 1500 }
+          "after": { "provider": "deepseek-flash", "reason": "real provider is within the configured tolerance", "estimated_cost_usd": 0.000028, "typical_latency_ms": 1500 }
         }
       ],
       "priority": [

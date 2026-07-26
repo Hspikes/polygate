@@ -206,7 +206,7 @@ INCLUDE_AUTOMATION=1 INCLUDE_POLICY=1 GRAFANA_PASSWORD=<pw> \
 - **监控部署**：实际连接集群前先运行
   `./scripts/kubernetes-monitoring-preflight.sh`。详细说明见
   [`monitoring/README.md`](./monitoring/README.md)。
-- **真实 Provider key 用 Secret**：`kubectl create secret generic provider-secrets --from-literal=real-a-key=xxx`，绝不写进清单。
+- **真实 Provider key 用 Secret**：`kubectl create secret generic provider-secrets --from-literal=real-a-key=xxx`，绝不写进清单。为兼容已部署环境，Secret data key 暂时保留旧名 `real-a-key`。
 - **Gateway 客户端 key 也用 Secret**：Web、Worker、CLI 使用不同身份。
   `gateway-client-secrets` 的完整创建命令见上面的“C2 Automation Worker 接线”；
   不要用只包含部分 key 的命令覆盖已有 Secret。

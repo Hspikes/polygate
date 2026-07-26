@@ -76,27 +76,27 @@ def chat_case(label, model, *, budget=0.01, privacy="standard"):
     return result
 
 
-forced_flash = chat_case("forced-flash", "real-a")
-forced_pro = chat_case("forced-pro", "real-b")
+forced_flash = chat_case("forced-flash", "deepseek-flash")
+forced_pro = chat_case("forced-pro", "deepseek-pro")
 auto_pro = chat_case("auto-high", "auto")
 budget_flash = chat_case("auto-high-tight-budget", "auto", budget=0.0001)
 private = chat_case("auto-high-private", "auto", privacy="high")
 
 assert (forced_flash["provider"], forced_flash["model"]) == (
-    "real-a",
+    "deepseek-flash",
     "deepseek-v4-flash",
 )
 assert (forced_pro["provider"], forced_pro["model"]) == (
-    "real-b",
+    "deepseek-pro",
     "deepseek-v4-pro",
 )
 assert (auto_pro["provider"], auto_pro["model"], auto_pro["rank_reason"]) == (
-    "real-b",
+    "deepseek-pro",
     "deepseek-v4-pro",
     True,
 )
 assert (budget_flash["provider"], budget_flash["model"], budget_flash["rank_reason"]) == (
-    "real-a",
+    "deepseek-flash",
     "deepseek-v4-flash",
     True,
 )
@@ -150,7 +150,7 @@ with urllib.request.urlopen(stream_request, timeout=45) as response:
             if content:
                 content_parts.append(content)
 
-assert provider == "real-b", provider
+assert provider == "deepseek-pro", provider
 assert request_id, request_id
 assert "".join(content_parts).strip(), content_parts
 assert saw_done
@@ -168,9 +168,9 @@ for attempt in range(20):
             raise
         time.sleep(0.1)
 assert status == 200
-assert decision["chosen_provider"] == "real-b", decision
+assert decision["chosen_provider"] == "deepseek-pro", decision
 assert decision["outcome"] == "success", decision
-print("OK  Web SSE -> real-b -> Decision Record")
+print("OK  Web SSE -> deepseek-pro -> Decision Record")
 
 
 policy_admin_key = os.environ.get("POLICY_ADMIN_KEY")
@@ -200,10 +200,10 @@ if policy_admin_key:
         timeout=15,
     )
     routing = preview["simulations"]["routing"][0]
-    assert routing["before"]["provider"] == "real-b", routing
-    assert routing["after"]["provider"] == "real-b", routing
+    assert routing["before"]["provider"] == "deepseek-pro", routing
+    assert routing["after"]["provider"] == "deepseek-pro", routing
     assert "quality_rank=2" in routing["after"]["reason"], routing
-    print("OK  Policy Editor preview -> real-b")
+    print("OK  Policy Editor preview -> deepseek-pro")
 else:
     print("SKIP Policy Editor preview (POLICY_ADMIN_KEY is not set)")
 

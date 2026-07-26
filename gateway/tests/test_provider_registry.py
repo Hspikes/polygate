@@ -35,20 +35,20 @@ class ProviderRegistryContractTests(unittest.TestCase):
 
     def test_flash_and_pro_are_registered_in_both_environments(self):
         for registry in (self.local, self.cluster):
-            self.assertEqual(registry["real-a"]["model"], "deepseek-v4-flash")
-            self.assertEqual(registry["real-b"]["model"], "deepseek-v4-pro")
+            self.assertEqual(registry["deepseek-flash"]["model"], "deepseek-v4-flash")
+            self.assertEqual(registry["deepseek-pro"]["model"], "deepseek-v4-pro")
 
     def test_pro_has_higher_quality_rank_and_official_cache_miss_prices(self):
         for registry in (self.local, self.cluster):
-            flash = registry["real-a"]
-            pro = registry["real-b"]
+            flash = registry["deepseek-flash"]
+            pro = registry["deepseek-pro"]
             self.assertGreater(pro["quality_rank"], flash["quality_rank"])
             self.assertEqual(pro["price_per_1k_input"], 0.000435)
             self.assertEqual(pro["price_per_1k_output"], 0.00087)
 
     def test_deepseek_models_share_credentials_and_disable_thinking(self):
         for registry in (self.local, self.cluster):
-            for name in ("real-a", "real-b"):
+            for name in ("deepseek-flash", "deepseek-pro"):
                 provider = registry[name]
                 self.assertEqual(provider["api_key_env"], "REAL_A_API_KEY")
                 self.assertEqual(
@@ -70,7 +70,7 @@ class ProviderRegistryContractTests(unittest.TestCase):
             "max_output_tokens",
             "capabilities",
         }
-        for name in ("real-a", "real-b"):
+        for name in ("deepseek-flash", "deepseek-pro"):
             self.assertEqual(
                 {field: self.local[name][field] for field in compared_fields},
                 {field: self.cluster[name][field] for field in compared_fields},

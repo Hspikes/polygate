@@ -11,7 +11,7 @@ data:
     #     the gateway still reads the shared DeepSeek API key from REAL_A_API_KEY / Secret)
     
     providers:
-      - name: real-a
+      - name: deepseek-flash
         kind: real
         endpoint: https://api.deepseek.com/v1/chat/completions
         api_key_env: REAL_A_API_KEY
@@ -33,7 +33,7 @@ data:
           content_blocks: false
           developer_role: false
           store: false
-      - name: real-b
+      - name: deepseek-pro
         kind: real
         endpoint: https://api.deepseek.com/v1/chat/completions
         api_key_env: REAL_A_API_KEY
