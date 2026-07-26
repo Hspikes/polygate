@@ -1,7 +1,7 @@
 """
 熔断器(Circuit Breaker)
 
-给每一个 provider(比如 real-a, mock-a, mock-b)维护一个"电路开关"状态：
+给每一个 provider（比如 deepseek-flash、deepseek-pro、mock-a）维护一个"电路开关"状态：
 - CLOSED    ：正常，请求可以打过去
 - OPEN      ：最近失败太多次，暂时不再尝试，直接判定为"不可用"
 - HALF_OPEN ：冷却时间到了，允许放行 1 个"试探请求"，看它是否恢复
@@ -14,15 +14,15 @@
 用法示例：
     breaker = CircuitBreakerRegistry()
 
-    if breaker.allow_request("real-a"):
+    if breaker.allow_request("deepseek-flash"):
         try:
             result = call_provider(...)
-            breaker.record_success("real-a")
+            breaker.record_success("deepseek-flash")
         except Exception:
-            breaker.record_failure("real-a")
+            breaker.record_failure("deepseek-flash")
             raise
     else:
-        # 直接跳过 real-a,router 会去选别的 provider
+        # 直接跳过 deepseek-flash，router 会去选别的 provider
         ...
 """
 import threading

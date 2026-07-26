@@ -111,8 +111,9 @@ class AgentCompatibilityTests(unittest.TestCase):
     def test_deepseek_adapter_flattens_text_blocks_and_maps_developer(self):
         request = GatewayRequest.model_validate(pi_payload())
         provider = {
-            "name": "real-a",
+            "name": "deepseek-flash",
             "model": "deepseek-v4-flash",
+            "request_defaults": {"thinking": {"type": "disabled"}},
             "capabilities": {
                 "content_blocks": False,
                 "developer_role": False,
@@ -125,8 +126,16 @@ class AgentCompatibilityTests(unittest.TestCase):
         self.assertEqual(payload["messages"][0]["role"], "system")
         self.assertEqual(payload["messages"][1]["content"], "read the fixture")
         self.assertEqual(payload["tools"][0]["function"]["name"], "read")
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
         self.assertTrue(payload["stream_options"]["include_usage"])
         self.assertNotIn("store", payload)
+
+    def test_provider_request_defaults_must_be_an_object(self):
+        with self.assertRaisesRegex(ProviderPayloadError, "invalid request_defaults"):
+            build_provider_payload(
+                {"name": "broken", "request_defaults": ["not", "an", "object"]},
+                {"messages": [{"role": "user", "content": "hello"}]},
+            )
 
     def test_stream_adapter_always_requests_usage_for_internal_accounting(self):
         request_payload = pi_payload()

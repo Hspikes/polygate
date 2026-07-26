@@ -107,7 +107,8 @@ services:
       POLICY_FILE: /config/policy-store.json
       POLICY_API_URL: http://automation:8020
       POLICY_REFRESH_SECONDS: "5"
-      POLYGATE_API_KEY: ""
+      # Worker uses one member of Gateway's POLYGATE_API_KEYS allow-list.
+      POLYGATE_API_KEY: ${POLYGATE_API_KEY:-}
     ports: ["9000:9000"]
     healthcheck:
       test:
@@ -128,7 +129,9 @@ services:
       WEB_GATEWAY_API_KEY: ${WEB_GATEWAY_API_KEY:-}
     ports: ["8080:8080"]
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/v1/models"]
+      # Container health only proves that Nginx/static assets are serving.
+      # Gateway authentication and availability are checked by web-smoke-test.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
       interval: 10s
       timeout: 3s
       retries: 3

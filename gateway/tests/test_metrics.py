@@ -329,7 +329,7 @@ class GatewayMetricsTest(unittest.TestCase):
             client.post(
                 "/v1/chat/completions",
                 json={
-                    "model": "real-a",
+                    "model": "deepseek-flash",
                     "messages": [
                         {
                             "role": "user",

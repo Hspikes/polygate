@@ -26,7 +26,7 @@ curl -X POST localhost:8081/admin/reset                   # 恢复正常
 - **强烈建议接 2 个便宜的真实 Provider**（如 DeepSeek/Qwen），让至少一次真实跨供应商切换是真的
 
 ## P0 完成判据
-- mock-a、mock-b、real-a 三者都能返回**带 usage 的 OpenAI 格式**响应（契约 #5）
+- mock-a、mock-b、deepseek-flash、deepseek-pro 都能返回**带 usage 的 OpenAI 格式**响应（契约 #5）
 - `/admin/config` 能一键让某个 Mock 报错或变慢
 
 ## 契约 #5 提醒
