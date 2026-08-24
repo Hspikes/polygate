@@ -10,11 +10,11 @@ PolyGate 是面向团队和多模型 AI 应用的云原生 **AI API 网关与策
 项目使用 Python、FastAPI、Redis、React、Prometheus、Grafana 和 Kubernetes，
 云端部署目标为 AWS EKS（`us-east-1`）。
 
-**本 README 的事实口径**：以下内容按 2026-07-26 完成的
-[《PolyGate 项目全貌与 30 分钟汇报方向总纲》](./document/PolyGate_项目全貌与30分钟汇报方向总纲_2026-07-26.md)
-校准过一次——该文档发现本文件早期版本仍把 Redis 优先队列、Worker 和 Policy
-控制面写成"待完成"，但这些能力在代码里其实早已实现。为避免同样的问题，本次
-更新沿用该文档的四级事实标注：
+| Web Console | Operations Dashboard |
+|---|---|
+| ![PolyGate Web Console](./assets/web-console.png) | ![PolyGate Grafana dashboard](./assets/observability-dashboard.png) |
+
+下面的能力表使用四级状态，避免把代码、部署资产和路线图混为一谈：
 
 - **代码已实现**：仓库中存在对应实现和测试；
 - **已有部署清单/脚本**：具备本地或 EKS 部署与验证路径，**但不等于你阅读本文
@@ -33,7 +33,7 @@ PolyGate 是面向团队和多模型 AI 应用的云原生 **AI API 网关与策
 | Policy Control Plane | 代码已实现 | 版本化策略、发布前 validate/simulate、热加载、Last Known Good、回滚、私有 Policy Editor |
 | 可观测性 | 代码已实现 | Prometheus 指标、Grafana 大屏（含 Policy 版本漂移面板）、Monitoring API |
 | Kubernetes / EKS 部署 | 已有部署清单/脚本 | 完整 manifest、RBAC、Secret、ConfigMap 持久化、HPA、preflight 与 smoke 脚本均已验证通过，但当前是否仍在集群中运行未知 |
-| Web ↔ Automation/Pi 端到端链路 | 部分接通 | Web Chat 直连 Gateway 已打通；Web 提交企业任务卡片、Pi Agent 调用 Automation 的完整用户链路尚未完全接通，详见总纲第 9.3 节 |
+| Web ↔ Automation/Pi 端到端链路 | 部分接通 | Web Chat 直连 Gateway 已打通；Web 提交企业任务卡片、Pi Agent 调用 Automation 的完整用户链路尚未完全接通 |
 | 语义缓存 / KEDA / 多租户计费 | 规划方向 | 明确不在本轮范围内 |
 
 当前稳定链路：
@@ -98,8 +98,8 @@ NodePort（`http://<节点公网IP>:30080`），而不是固定域名的 LoadBal
 Gateway、Automation、Worker、Redis、Prometheus、Grafana 和 Policy Editor 均
 保持集群内部访问，仅管理员通过 `kubectl port-forward` 触达。
 
-**是否有正在运行的集群、具体访问地址是什么，请向组内确认**——本文档不假设
-读者阅读时集群仍然在线，详见 `deploy/README.md` 与 `deploy/RUNBOOK.md`。
+本文档不假设存在持续在线的共享集群。部署或排障前请按 `deploy/README.md`
+检查目标环境、凭证和资源状态。
 
 ## 本地集成闸门（部署前必须全绿）
 
@@ -116,8 +116,9 @@ Worker 测试需要真实 Redis（`AUTOMATION_TEST_REDIS_URL`，用 db 15）；G
 误判，要同时确认 skip 数为 0。
 
 ```bash
-python -m pytest automation/tests -q     # 152 passed
-python -m pytest tests -q                # 在 gateway/ 下，86 passed / 0 skipped
+AUTOMATION_TEST_REDIS_URL=redis://127.0.0.1:6379/15 \
+  python -m pytest automation/tests -q
+cd gateway && python -m pytest tests -q && cd ..
 ```
 
 **2. Web 测试**
@@ -126,10 +127,8 @@ python -m pytest tests -q                # 在 gateway/ 下，86 passed / 0 skip
 cd web && npm test && npm run lint && npm run build && cd ..
 ```
 
-⚠️ **需要 Node 22。** 在 Node 25 上 57 个测试会全部失败，报
-`TypeError: localStorage.clear is not a function`——Node 内置的实验性
-`localStorage` 会顶掉 jsdom 的那个。这不是代码回归：同一份代码在 Node 22 下
-57 passed / lint 0 / build 0。仓库目前没有 `engines` 或 `.nvmrc` 来固定版本。
+当前 Web 测试环境使用 Node 22。Node 25 的实验性 `localStorage` 会与 jsdom
+冲突，因此不属于受支持的测试运行时。
 
 **3. 契约与部署回归**
 
@@ -182,37 +181,30 @@ POLICY_ADMIN_KEY=local-policy-admin-development \
 `policy-store.json`，重启容器即回到初始版本。本地冒烟验的是 API 语义与热
 加载，ConfigMap 持久化只能在 EKS 上验证。
 
-## 系统设计与团队分工
+## Repository map
 
-四人并行开发、契约先行的协作方式，是这个项目在工程组织上的一部分成果，
-详细过程记录在下方"详细文档"。这里只记录最终的领域划分（历史任务分配，
-项目已收尾，不再是进行中的安排）：
+| 路径 | 职责 |
+|---|---|
+| `gateway/` | OpenAI 兼容 API、路由、缓存、可靠性与 Decision Record |
+| `providers/` | Provider 适配器和可控故障注入 Mock |
+| `automation/` | Intent/Preview/Job、Worker 调度与 Policy 生命周期 |
+| `web/` | Chat、路由偏好和决策卡片界面 |
+| `agent/`、`.pi/extensions/` | Agent 接口边界与 Pi 集成 |
+| `contracts/` | 跨组件 JSON Schema、示例和 Provider 注册表 |
+| `deploy/`、`monitoring/` | Compose/Kubernetes/EKS、Prometheus 与 Grafana |
+| `scripts/` | 契约回归、部署校验、冒烟和压力测试 |
 
-| 成员 | 负责领域 | 交付内容 |
-|---|---|---|
-| A | `gateway/`、Automation 编译/API、Policy Runtime | 路由决策引擎、Preview 编译与代码生成、Policy Schema、Gateway 侧策略热加载与路由模拟 |
-| B | `providers/`、Automation 调度执行、Policy 控制面 | Redis Store、优先队列与 Worker、Policy 生命周期（validate/simulate/publish/rollback） |
-| C | `deploy/`、`monitoring/`、部署脚本 | Kubernetes/EKS 接线、RBAC 与 Secret、Prometheus/Grafana、集成测试闸门 |
-| D | `web/`、`agent/`、`.pi/extensions/`、Policy Editor | Chat UI、需求卡片、Pi Extension、策略编辑器前端 |
-| 全体 | `contracts/` | 评审和冻结跨服务接口 |
+组件级说明：
 
-`contracts/` 是跨服务接口的唯一真相来源；改动历史上要求全体确认，这条规则
-在整个开发周期内被严格执行。
+- [Gateway](./gateway/README.md) · [Providers](./providers/README.md)
+- [Automation Service](./automation/README.md) · [Contract Registry](./contracts/README.md)
+- [Web Console](./web/README.md) · [Agent / Pi integration](./agent/README.md)
+- [Kubernetes deployment](./deploy/README.md)
+- [Local monitoring](./monitoring/README.md) · [Kubernetes monitoring](./deploy/monitoring/README.md)
 
-## 详细文档
+## Compatibility and security rules
 
-- **[PolyGate 项目全貌与 30 分钟汇报方向总纲](./document/PolyGate_项目全貌与30分钟汇报方向总纲_2026-07-26.md)** ——
-  最完整、最新的系统说明，涵盖架构、三条关键链路、Policy 生命周期、可观测性、
-  Kubernetes 与安全设计；本 README 与其冲突时，以总纲为准
-- [Automation Service](./automation/README.md)
-- [Agent / Pi 接口边界](./agent/README.md)
-- [Kubernetes 部署说明](./deploy/README.md) · [运行手册](./deploy/RUNBOOK.md)
-- [本地监控说明](./monitoring/README.md) · [Kubernetes 监控部署说明](./deploy/monitoring/README.md)
-- [Project Poster (PDF)](./PolyGate_Poster_final.pdf)
-
-## 契约与协作规则（历史约定，供参考）
-
-- `contracts/` 是跨服务接口的唯一真相来源，改动需全体确认。
+- `contracts/` 是跨服务接口的唯一真相来源；不兼容变更必须同步更新实现、示例和契约测试。
 - 不提交 `.env`、AWS 凭证、Provider API Key、Grafana 密码或真实员工 Prompt。
 - Apple Silicon 本地开发可使用原生镜像，但推送到 x86_64 EKS 节点的镜像必须
   使用 `--platform linux/amd64`。
@@ -221,6 +213,5 @@ POLICY_ADMIN_KEY=local-policy-admin-development \
 
 ## 范围边界
 
-课程项目优先保证可解释、可演示和可复现。以下明确不在本项目范围内，属于
-后续扩展方向，不是验收前置条件：语义缓存、KEDA、Provider CRD、复杂多租户
-计费、生产级身份系统。
+当前版本优先保证路由决策可解释、运行行为可复现、控制面变更可回滚。语义缓存、
+KEDA、Provider CRD、复杂多租户计费和生产级身份系统尚未实现，不应被视为现有能力。

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression checks for C-line deployment defaults. Run with:
+# Regression checks for deployment defaults. Run with:
 #   bash scripts/tests/test-deployment-automation.sh
 
 set -euo pipefail
@@ -141,16 +141,10 @@ require_text \
 
 require_text \
   "$ROOT_DIR/deploy/monitoring/README.md" \
-  "ECR_REGISTRY=$REGISTRY"
-require_text \
-  "$ROOT_DIR/deploy/RUNBOOK.md" \
-  'update-kubeconfig --name G3EKS'
+  'ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"'
 require_text \
   "$ROOT_DIR/deploy/README.md" \
   'INCLUDE_AUTOMATION=1'
-require_text \
-  "$ROOT_DIR/deploy/README.md" \
-  'C1 不立即部署到 EKS'
 
 require_text \
   "$ROOT_DIR/deploy/automation.yaml" \
@@ -298,12 +292,6 @@ require_text \
   "$ROOT_DIR/docker-compose.yml" \
   'AUTOMATION_REDIS_URL: redis://redis:6379/0'
 require_text \
-  "$ROOT_DIR/docs/superpowers/specs/2026-07-23-c1-automation-kubernetes-design.md" \
-  'AUTOMATION_REDIS_URL=redis://redis:6379/0'
-require_text \
-  "$ROOT_DIR/docs/superpowers/plans/2026-07-23-c1-automation-kubernetes.md" \
-  'AUTOMATION_REDIS_URL=redis://redis:6379/0'
-require_text \
   "$ROOT_DIR/scripts/kubernetes-monitoring-preflight.sh" \
   '"$ROOT_DIR/deploy/automation.yaml"'
 require_text \
@@ -312,9 +300,7 @@ require_text \
 
 for file in \
   "$ROOT_DIR/deploy/automation.yaml" \
-  "$ROOT_DIR/docker-compose.yml" \
-  "$ROOT_DIR/docs/superpowers/specs/2026-07-23-c1-automation-kubernetes-design.md" \
-  "$ROOT_DIR/docs/superpowers/plans/2026-07-23-c1-automation-kubernetes.md"; do
+  "$ROOT_DIR/docker-compose.yml"; do
   reject_text "$file" 'redis://redis:6379/1'
 done
 

@@ -1,17 +1,12 @@
-# deploy/  —— 成员 C（Kubernetes 与可观测性）
+# PolyGate Kubernetes Deployment
 
-## 每次重新开工先看这个
-> **Session 过期 / 合盖太久 / 页面卡住重刷之后，先看 [`RUNBOOK.md`](./RUNBOOK.md)。**
-> 5 分钟刷新凭证 + 确认环境状态，别每次都重新排查一遍。
+## Deployment goal
 
-## 你的验收物（来自项目书）
-> 从清单部署；探针、资源限制和 HPA 有可见证据。
+PolyGate 通过版本化清单和脚本部署；探针、资源限制、内部服务边界和 HPA 均应
+能够从 Kubernetes 对象及监控指标中验证。
 
-## 第 1 天（不依赖任何人的代码）
-1. 验证集群出网、Envoy/Gateway、Redis 存储类、Prometheus 资源余量（对照 AWS 教程）
-2. `kubectl apply -f redis.yaml`，确认使用 `emptyDir` 的 Redis Pod Running
-3. 用 Web 镜像跑通 Deployment+Service+NodePort 部署链路（教程 case study）
-4. 搞顺 build→push→镜像仓库 流程（Learner Lab 用 ECR 或公共仓库）
+部署前确认目标集群出网、镜像仓库权限、节点架构、Redis 存储策略和 Prometheus
+资源余量。默认清单使用 ECR 兼容的镜像仓库与 `linux/amd64` 镜像。
 
 ## 本地构建镜像
 
@@ -28,30 +23,25 @@
 PUSH_IMAGES=1 ./scripts/build-kubernetes-images.sh
 ```
 
-## C1 Automation 私有接线
-
-**C1 不立即部署到 EKS**。当前 Automation 仍使用进程内存保存 Preview 和 Job，
-Redis Store/Worker 集成通过前只准备清单和脚本，不创建 ECR 仓库、不推送镜像、
-也不修改当前集群。
+## Automation deployment
 
 Automation 的构建和部署均为显式 opt-in，默认
-`INCLUDE_AUTOMATION=0`，现有 P0/P1 命令行为不变。未来完成本地集成后，使用同一个
-不可变标签执行：
+`INCLUDE_AUTOMATION=0`。启用时使用同一个不可变标签执行：
 
 ```bash
-C1_IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
+AUTOMATION_IMAGE_TAG="$(git rev-parse --short=12 HEAD)"
 
-IMAGE_TAG="$C1_IMAGE_TAG" INCLUDE_AUTOMATION=1 PUSH_IMAGES=1 \
+IMAGE_TAG="$AUTOMATION_IMAGE_TAG" INCLUDE_AUTOMATION=1 PUSH_IMAGES=1 \
   ./scripts/build-kubernetes-images.sh
 
-IMAGE_TAG="$C1_IMAGE_TAG" INCLUDE_AUTOMATION=1 \
+IMAGE_TAG="$AUTOMATION_IMAGE_TAG" INCLUDE_AUTOMATION=1 \
   ./scripts/deploy-kubernetes-application.sh
 ```
 
 集群内地址固定为 `http://automation:8020`，Service 为 ClusterIP。当前单副本限制
-必须保持到 A/B 将状态迁移到 Redis 并完成并发测试之后。
+用于保证队列领取的确定性；扩大副本数前必须先验证并发领取不变量。
 
-## C2 Automation Worker 接线
+## Automation Worker
 
 Automation 已改用 Redis DB 0，并通过 `automation:` key prefix 隔离状态。
 Worker 与 Automation API 共用同一个镜像，但使用独立 Deployment 和启动命令：
@@ -123,7 +113,7 @@ GRAFANA_PASSWORD=<当前管理员密码> INCLUDE_AUTOMATION=1 \
 Automation 面板。Automation API、Worker 和监控均保持集群内部访问，不增加
 NodePort 或 LoadBalancer。
 
-## C3 Policy Control Plane 接线
+## Policy Control Plane
 
 Policy v1 使用 `polygate-routing-policy` ConfigMap 保存 active version 和最多
 20 个完整版本。部署脚本只会在 ConfigMap 不存在时，从
@@ -169,12 +159,11 @@ POLICY_ALLOW_ENV_ADMIN_KEY=true
 Automation 的本地 `8020` 端口只绑定 `127.0.0.1`，不会监听局域网网卡。这个明文
 开发值不得复制到 Kubernetes 清单、生产日志或浏览器代码。
 
-## 部署顺序（第 4 天集成）
+## Deployment sequence
 
 **先跑本地集成闸门再上云。** 完整顺序见根
-[README](../README.md#本地集成闸门上-eks-前必须全绿)：后端与 Web 测试、契约与
-部署回归、四个行为冒烟、六条安全不变量。闸门没全绿就部署，等于把本地能查出来的
-问题带到只有 C 能操作的环境里排查。
+[README](../README.md#本地集成闸门部署前必须全绿)：后端与 Web 测试、契约与
+部署回归、行为冒烟和安全不变量。
 
 使用和构建、推送时完全相同的标签：
 
@@ -194,21 +183,21 @@ INCLUDE_AUTOMATION=1 INCLUDE_POLICY=1 GRAFANA_PASSWORD=<pw> \
   ./scripts/kubernetes-monitoring-smoke-test.sh
 ```
 
-## 关键提醒（踩过的坑）
-- **Redis 用 `redis.yaml`（emptyDir）**：这个账号的
-  EBS CSI Driver 插件因 Learner Lab 的 IAM 权限限制，Pod Identity 角色关联失败，
-  controller 一直 `CrashLoopBackOff`，排查后判定修复成本过高。Redis 只是缓存，
-  Pod 重启丢缓存可接受。PVC 参考版本保存在 `reference/redis-pvc.yaml`。
+## Operational notes
+
+- **Redis 默认使用 `redis.yaml`（emptyDir）**：该模式适合可丢弃缓存；需要保留
+  Redis 数据的环境应改用托管 Redis 或 `reference/redis-pvc.yaml` 中的持久化方案。
 - **Web NodePort 不通**：当前唯一公开入口固定为 Web `30080`。Security Group 只开放
-  该端口，并尽量限制为演示者 IP；Gateway 与 Mock Provider 都保持 ClusterIP。
+  该端口，并限制为受信任 CIDR；Gateway 与 Mock Provider 都保持 ClusterIP。
 - **providers.yaml 双份**：`contracts/providers.yaml` 是本地 compose 用的（localhost），集群里要用 service DNS（`http://mock-a:8080`）。别混。
-- **HPA 看不到扩容**：确认 metrics-server 已装、gateway 设了 resources.requests、node group 扩容上限够高（已手动设为 min=2/desired=2/max=4）。
+- **HPA 看不到扩容**：确认 metrics-server 已安装、Gateway 设置了
+  `resources.requests`，并且 node group 仍有扩容余量。
 - **监控部署**：实际连接集群前先运行
   `./scripts/kubernetes-monitoring-preflight.sh`。详细说明见
   [`monitoring/README.md`](./monitoring/README.md)。
 - **真实 Provider key 用 Secret**：`kubectl create secret generic provider-secrets --from-literal=real-a-key=xxx`，绝不写进清单。为兼容已部署环境，Secret data key 暂时保留旧名 `real-a-key`。
 - **Gateway 客户端 key 也用 Secret**：Web、Worker、CLI 使用不同身份。
-  `gateway-client-secrets` 的完整创建命令见上面的“C2 Automation Worker 接线”；
+  `gateway-client-secrets` 的完整创建命令见上面的“Automation Worker”；
   不要用只包含部分 key 的命令覆盖已有 Secret。
   Web Key 仅由 Nginx 运行时读取；不要使用 `VITE_` 前缀，也不要写入镜像、JavaScript
   或日志。公网开放 `/v1` 前必须创建该 Secret。
@@ -228,8 +217,9 @@ WEB_BASE=http://<节点公网IP>:30080 ./scripts/web-smoke-test.sh
 如暂时不开放 Security Group，可先执行 `kubectl port-forward service/web 8080:80`，
 再使用默认 `WEB_BASE` 运行 smoke test。故障注入管理端只通过受控的 port-forward 访问。
 
-## P0 完成判据
-- 整套 P0 能从清单部署到 EKS
+## Deployment invariants
+
+- 整套应用能够从版本化清单部署到 EKS
 - Web 是唯一公开入口，`/api` 同源代理可以完成多轮请求
 - 探针/资源限制生效，`kubectl describe` 能看到证据
 - Prometheus 能分别发现每个 Gateway Pod，Grafana 能显示 CPU、内存和 HPA 副本变化

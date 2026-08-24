@@ -64,12 +64,14 @@ The deployment script refuses to continue if this Secret is missing.
 
 ## Deploy
 
-For the next application release, build, push, and deploy with one immutable
-Git-based image tag. The commands below target the current Learner Lab ECR
-account and build `linux/amd64` images for the x86_64 EKS nodes:
+For an application release, build, push, and deploy with one immutable Git-based
+image tag. Set `ECR_REGISTRY` to the target registry and build `linux/amd64`
+images for x86_64 EKS nodes:
 
 ```bash
-ECR_REGISTRY=356029564744.dkr.ecr.us-east-1.amazonaws.com \
+AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+AWS_REGION="${AWS_REGION:-us-east-1}"
+ECR_REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com" \
 TARGET_PLATFORM=linux/amd64 \
 PUSH_IMAGES=1 \
 ./scripts/build-kubernetes-images.sh
@@ -195,8 +197,8 @@ sum by (component, reason) (rate(polygate_policy_reload_failures_total[5m]))
 
 - All application resources currently live in `default`; discovery and
   dashboard queries intentionally use that namespace.
-- Prometheus and Grafana use `emptyDir`, matching the Learner Lab storage
-  workaround. Their local history is lost if their Pods restart.
+- Prometheus and Grafana use `emptyDir`; their local history is lost if their
+  Pods restart. Use persistent volumes or a managed backend when retention is required.
 - Prometheus retains at most two days of data.
 - `metrics-server` is still required by the HPA. It is separate from
   kube-state-metrics and is not installed here.

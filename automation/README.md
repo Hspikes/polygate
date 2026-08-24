@@ -56,12 +56,12 @@ Automation container restarts.
 
 ## Integration gate
 
-The full cross-lane sequence that must pass before an EKS deploy lives in the
-root [README](../README.md#本地集成闸门上-eks-前必须全绿). The Automation-specific
+The full integration sequence that must pass before an EKS deploy lives in the
+root [README](../README.md#本地集成闸门部署前必须全绿). The Automation-specific
 parts of it:
 
 ```bash
-# 152 passed. Needs a real Redis on db 15 (Worker tests) and Python 3.12.
+# Needs a real Redis on db 15 for Worker tests and Python 3.12.
 AUTOMATION_TEST_REDIS_URL=redis://127.0.0.1:6379/15 python -m pytest automation/tests -q
 
 # Preview/Job policy_version stamping, idempotency, Worker completion, metrics.
@@ -93,10 +93,3 @@ For EKS, keep `service/automation` as `ClusterIP` and access the same page with:
 ```bash
 kubectl port-forward service/automation 8020:8020
 ```
-
-## Ownership seams
-
-- A: templates, preview compiler, API validation, Gateway client.
-- B: Redis repository, priority scheduler, worker, leases, retries.
-- D: private Policy Editor and clients that consume the API.
-- C: image build, Compose/EKS, Prometheus/Grafana, smoke tests.

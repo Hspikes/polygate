@@ -1,7 +1,7 @@
 # PolyGate Pi Agent integration boundary
 
-Member D owns this directory. The Agent is a replaceable interaction layer;
-company policy and Provider routing must not be implemented here.
+The Agent is a replaceable interaction layer. Company policy and Provider
+routing must not be implemented here.
 
 ## Runtime boundary
 
@@ -53,15 +53,3 @@ error
 
 The browser continues to collect privacy, budget, urgency, and department
 through explicit controls. The Agent must not infer those values from prose.
-
-## Files D can add without backend conflicts
-
-```text
-agent/package.json
-agent/tsconfig.json
-agent/src/server.ts
-agent/src/polygate-extension.ts
-agent/src/automation-client.ts
-agent/tests/**
-web/**
-```

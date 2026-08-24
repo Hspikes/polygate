@@ -1,9 +1,11 @@
-# gateway/  —— 成员 A（网关与策略）
+# PolyGate Gateway
 
-## 你的验收物（来自项目书）
-> 同一请求能解释为何选择某 Provider —— 决策卡片里的 `reason` 必须是人话。
+## Design goal
 
-## 本地开发（不依赖 B 的 Mock）
+同一请求必须能够解释为何选择某个 Provider；决策卡片里的 `reason` 应直接表达
+生效的质量、隐私、预算、延迟和健康约束。
+
+## 本地开发（不依赖 Mock Provider）
 ```bash
 cd gateway
 python -m venv .venv && source .venv/bin/activate
@@ -42,7 +44,7 @@ Provider 调用额外区分 `success`、`error` 和客户端主动触发的 `can
 和这些有限的结果类型；`request_id`、prompt、路由原因和原始错误文本
 继续写入日志，不进入指标标签。
 
-## 接入 B 的 Mock（第 3 天集成）
+## Mock Provider integration
 去掉 `FAKE_ADAPTER=1`，用 `docker compose up` 起全套即可。
 
 ## Pi Agent 可运行闭环
@@ -75,7 +77,7 @@ POLYGATE_API_KEYS=local-development docker compose up --build gateway
 ```
 
 所有 `stream=true`、tools、tool history、content-block、消息元数据、会话 ID
-和显式生成参数请求默认绕过 P0 精确缓存，避免不同语义的请求复用旧答案。
+和显式生成参数请求默认绕过精确缓存，避免不同语义的请求复用旧答案。
 流式请求只允许在首个下游 SSE event 之前重试或切换 Provider，输出开始后
 发生错误会终止流，不拼接其他 Provider 的输出。Gateway 会为内部计费请求
 usage，但只在客户端设置 `stream_options.include_usage=true` 时向下游透传
@@ -125,20 +127,21 @@ curl -H "Authorization: Bearer $POLYGATE_API_KEY" \
 远程 Pi 通过 Web/Nginx 公网入口使用 `https://<host>/v1`；该位置关闭
 响应/请求缓冲并保留 Authorization。生产环境必须配置非默认客户端 Key。
 
-## 你负责的文件
-- `app/main.py`     入口、缓存查、组装决策卡片、request_id（**已种下，别删**）
-- `app/router.py`   ⭐ 路由核心，P0 的规则都在这，扩展策略只改这里
-- `app/adapters.py` Adapter 归一化（真实 API 的鉴权细节和 B 一起弄）
-- `app/cache.py`    精确/规范化缓存（normalize 规则是和 B 的共享契约）
+## Module layout
+
+- `app/main.py`     入口、缓存查询、决策卡片与 request ID
+- `app/router.py`   路由约束、Provider 选择与策略模拟
+- `app/adapters.py` Provider 鉴权和 OpenAI 响应归一化
+- `app/cache.py`    精确/规范化缓存及缓存键规则
 - `app/cost.py`     成本估算
 - `app/registry.py` 读 providers.yaml
 
-## P0 完成判据
+## Core behavior
 - `/v1/chat/completions` 端到端返回「答案 + 决策卡片」
 - 卡片包含 chosen_provider / reason / cache_hit / cost / latency / tokens / request_id
 - 改约束（quality/privacy/max_cost）能看到路由结果和 reason 相应变化
 
-## P1 可靠性状态
+## Reliability status
 
 实时健康探测、重试、熔断、首字节前 failover、请求预算和 Redis 重连均已接入
 主链路。跨副本共享熔断状态仍未实现；当前每个 Gateway Pod 独立维护熔断器。
