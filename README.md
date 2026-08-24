@@ -1,5 +1,7 @@
 # PolyGate
 
+[English](./README.md) | [简体中文](./README.zh-CN.md)
+
 > **An AI API control plane for teams.** One endpoint for developers. One policy
 > plane for the organization.
 
@@ -9,6 +11,9 @@ applications, applies one versioned organizational policy, and leaves an
 explainable record of what happened on every request.
 
 **Control decides. Execution enforces. Observability proves.**
+
+> **Recognition:** PolyGate ranked first in the NUS Cloud Computing course
+> project evaluation.
 
 | Web Console | Operations Dashboard |
 |---|---|
