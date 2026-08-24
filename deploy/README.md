@@ -162,7 +162,7 @@ Automation 的本地 `8020` 端口只绑定 `127.0.0.1`，不会监听局域网�
 ## Deployment sequence
 
 **先跑本地集成闸门再上云。** 完整顺序见根
-[README](../README.md#本地集成闸门部署前必须全绿)：后端与 Web 测试、契约与
+[README](../README.md#verification-gates)：后端与 Web 测试、契约与
 部署回归、行为冒烟和安全不变量。
 
 使用和构建、推送时完全相同的标签：

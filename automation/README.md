@@ -57,7 +57,7 @@ Automation container restarts.
 ## Integration gate
 
 The full integration sequence that must pass before an EKS deploy lives in the
-root [README](../README.md#本地集成闸门部署前必须全绿). The Automation-specific
+root [README](../README.md#verification-gates). The Automation-specific
 parts of it:
 
 ```bash
