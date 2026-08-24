@@ -5,15 +5,13 @@
 > **An AI API control plane for teams.** One endpoint for developers. One policy
 > plane for the organization.
 
-PolyGate is an OpenAI-compatible, policy-aware gateway for shared AI
-infrastructure. It lifts routing and scheduling decisions out of individual
-applications, applies one versioned organizational policy, and leaves an
-explainable record of what happened on every request.
+Applications keep the OpenAI-compatible interface they already know. PolyGate
+reads the current organizational policy, decides when and where work runs, and
+records why.
 
 **Control decides. Execution enforces. Observability proves.**
 
-> **Recognition:** PolyGate ranked first in the NUS Cloud Computing course
-> project evaluation.
+The project ranked first in the NUS Cloud Computing course project evaluation.
 
 | Web Console | Operations Dashboard |
 |---|---|
@@ -21,8 +19,8 @@ explainable record of what happened on every request.
 
 ## Why a control plane?
 
-Giving every team direct access to AI providers looks simple: hand out API
-keys, set a budget, and let people move fast. Then the rules arrive.
+Many teams begin with provider keys and a shared budget. That setup works until
+several applications depend on it and operational rules start to accumulate.
 
 - Sensitive data must stay inside an approved boundary.
 - Different workloads need different model capabilities and quality levels.
@@ -31,11 +29,10 @@ keys, set a budget, and let people move fast. Then the rules arrive.
 - Every exception, override, retry, and fallback needs an owner and an audit
   trail.
 
-Putting those decisions into every application creates policy drift. Putting a
-thin proxy in front of providers only moves the same tangle into one process.
-PolyGate takes its design cue from packet networks: separate the system that
-**computes policy**, the path that **executes it**, and the telemetry that
-**proves what actually happened**.
+Policies copied into individual applications soon drift apart. A thin gateway
+centralizes traffic, but it still needs a clear way to manage conflicting
+rules. PolyGate borrows the separation used in packet networks: one plane
+computes policy, another executes it, and telemetry records the outcome.
 
 | Packet networks | PolyGate |
 |---|---|
@@ -43,12 +40,11 @@ PolyGate takes its design cue from packet networks: separate the system that
 | Data plane forwards packets | Execution plane schedules and routes AI work |
 | Telemetry reports network behavior | Observability records decisions, cost, latency, and drift |
 
-The result is not one more endpoint in front of many providers. It is routing
-for AI work.
+PolyGate treats AI requests as shared workloads that need consistent routing.
 
 ## One policy, two decisions
 
-Every request creates two separate decisions:
+For each request, PolyGate answers two questions:
 
 1. **Who runs next?** The Automation worker orders queued jobs by urgency, then
    ages waiting work so lower-priority jobs cannot starve.
@@ -97,24 +93,6 @@ flowchart LR
   adapters, cache, retries, circuit breakers, and pre-response failover.
 - **Observability plane:** Prometheus metrics, Grafana dashboards, redacted
   Decision Records, and policy-version drift detection.
-
-## What is implemented
-
-This repository distinguishes working code from deployment assets and future
-direction. It does not imply that a public cloud deployment is currently
-running.
-
-| Capability | Status | Evidence in the repository |
-|---|---|---|
-| Policy-aware Gateway | Implemented | OpenAI Chat Completions compatibility, provider registry, ordered routing gates, exact cache, and explainable decisions |
-| Request reliability | Implemented | Bounded retries, circuit breakers, request-level time budgets, and failover before downstream output begins |
-| Automation scheduling | Implemented | Intent/preview/job APIs, Redis priority queue, leases, retries, and anti-starvation aging |
-| Policy control plane | Implemented | Validate → preview → publish lifecycle, version history, hot reload, Last Known Good fallback, and rollback |
-| Observability | Implemented | Prometheus metrics, Grafana dashboards, Decision Records, and policy convergence metrics |
-| Kubernetes / EKS | Deployment assets | Manifests, RBAC, ConfigMap persistence, HPA, preflight checks, and smoke tests are included |
-| Web chat → Gateway | Integrated | Multi-turn chat, route preferences, streaming responses, and decision cards |
-| Web automation cards and Pi automation path | Partial | Components exist; the complete end-user workflow is still being connected |
-| Semantic cache, KEDA, provider CRDs, and multi-tenant billing | Roadmap | Planned extensions to the control-plane model |
 
 ## Quick start
 
@@ -167,17 +145,16 @@ verification.
 
 ## Policy lifecycle
 
-A policy change follows a deliberate release path:
+Policy changes use this release path:
 
 ```text
 edit -> validate -> simulate/preview -> publish -> hot reload -> converge
                                                         \-> rollback
 ```
 
-Automation is the only policy writer. Gateway and Worker read the policy,
-validate the complete document, and atomically swap versions. If the control
-plane is temporarily unavailable, the execution plane continues serving from
-its Last Known Good policy.
+Policy writes go through Automation. Gateway and Worker read the policy,
+validate the complete document, and atomically swap versions. If Automation is
+temporarily unavailable, they continue serving with the Last Known Good policy.
 
 ## Verification gates
 
@@ -251,8 +228,9 @@ Component documentation:
 
 ## Security and operational boundaries
 
-- `contracts/` is the source of truth for cross-service interfaces. Breaking
-  changes must update implementations, examples, and contract tests together.
+- The schemas and examples under `contracts/` define the shared interfaces.
+  Interface changes should update the implementations and contract tests in the
+  same commit.
 - Never commit `.env`, cloud credentials, provider API keys, Grafana passwords,
   or real user prompts.
 - `privacy=high` requests must not route to providers marked `external`.
@@ -261,26 +239,26 @@ Component documentation:
 - Decision Records are redacted, authenticated when Gateway auth is enabled,
   and expire from Redis. Prompts, tool arguments, credentials, upstream URLs,
   and raw errors are not stored in them.
-- Circuit-breaker state is currently local to each Gateway replica rather than
-  shared across replicas.
+- Each Gateway replica currently keeps its own circuit-breaker state; replicas
+  do not share it.
 
-## From a control plane to the AI service network
+## The wider AI service network
 
-PolyGate begins inside one organization, but its architecture does not stop at
-the organizational boundary.
+PolyGate currently places a control plane around the AI traffic of one
+organization. The same interfaces can also connect a larger system.
 
-Once policy is versioned, execution is decoupled, and every decision carries
-evidence, control planes can become interoperable. Organizations can publish
-constraints instead of provider-specific code. Providers and in-house clusters
-can advertise capability, locality, cost, and health. Shared exchange points
-can match AI work to the right execution domain while preserving each
-participant's policy.
+Organizations can publish policy constraints. Providers and in-house clusters
+can report capability, locality, cost, and health. Shared exchange points can
+use that information to route work across execution domains without putting
+provider-specific rules back into client applications.
 
-What starts as an internal gateway becomes a routing node. What starts as one
-policy plane becomes a fabric of cooperating control planes.
+![PolyGate AI API service network](./assets/ai-service-network.png)
 
-**PolyGate lays the control, execution, and observability foundations for that
-AI API service network.**
+*Service-network concept from the original PolyGate presentation.*
+
+In this model, an internal gateway serves as a routing node and policy planes
+can coordinate across organizational boundaries. PolyGate brings its existing
+policy lifecycle, execution boundary, and decision telemetry into that network.
 
 ## License
 
